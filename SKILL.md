@@ -3,11 +3,15 @@ name: pdf-to-memorial-rsc
 description: >
   Gera o memorial RSC-PCCTAE completo (formatado UFV/ABNT OBRIGATÓRIO) a partir do PDF do
   Relatório Detalhado RSC emitido pelo sistema oficial da UFV. Lê o PDF, extrai dados
-  estruturados (nome, matrícula, pontuação por grupo, TODOS os 17 critérios com itens
-  detalhados, nível RSC pleiteado), pergunta interativamente o ano de ingresso na UFV,
-  detecta automaticamente se a equivalência é com Mestrado ou Doutorado, e produz
-  autonomamente os arquivos .md (fonte de verdade), .docx (formatado UFV/ABNT) e .pdf.
-  v3.1: ESTRUTURA E TÓPICOS IDÊNTICOS ao memorial de referência aprovado pela CRSC-PCCTAE,
+  estruturados (nome, matrícula, lotação, data de admissão, pontuação por grupo, TODOS os
+  17 critérios com itens detalhados, nível RSC pleiteado), detecta automaticamente o ano de
+  ingresso na UFV pela data de admissão, detecta automaticamente se a equivalência é com
+  Mestrado ou Doutorado, e produz autonomamente os arquivos .md (fonte de verdade) e .docx
+   (formatado UFV/ABNT). v3.3: --example gera memorial de exemplo com dados anônimos
+   (placeholders) — exemplos .pdf/.docx removidos do pacote; run.py --example é a fonte
+   única dos exemplos. v3.2: ano de ingresso automático, lotação na narrativa, epígrafe e
+   agradecimentos personalizados, geração PDF removida do fluxo principal.
+   v3.1: ESTRUTURA E TÓPICOS IDÊNTICOS ao memorial de referência aprovado pela CRSC-PCCTAE,
   incluindo as seções "A essência do meu fazer profissional" (3 dimensões), "Fundamentos
   legais" (requisitos do Nível VI), narrativa por critério com texto fluido em cada anexo,
   "Verificação dos requisitos legais" (8.2), "Reflexão Final" com subseções (9.1-9.3),
@@ -18,19 +22,35 @@ description: >
   "relatório RSC", ou ao mencionar o arquivo "RSC Detalhado_*.pdf".
 ---
 
-# PDF → Memorial RSC-PCCTAE — Gerador Autônomo v3.1
+# PDF → Memorial RSC-PCCTAE — Gerador Autônomo v3.2
 
 Gera o memorial completo de Reconhecimento de Saberes e Competências (RSC-PCCTAE)
 autonomamente a partir do PDF oficial do Relatório Detalhado RSC emitido pelo sistema
 da UFV (Pró-Reitoria de Gestão de Pessoas), em conformidade com o **Decreto nº 13.048,
 de 3 de julho de 2026** (Art. 13).
 
+v3.2: ano de ingresso extraído automaticamente da data de admissão; lotação incluída
+na narrativa; epígrafe e agradecimentos personalizados dinâmicos; geração PDF removida
+do fluxo principal (use o .docx para gerar PDF no Word/LibreOffice).
+
 > **Decreto nº 13.048/2026:** [https://www.planalto.gov.br/ccivil_03/_ato2023-2026/2026/decreto/d13048.htm](https://www.planalto.gov.br/ccivil_03/_ato2023-2026/2026/decreto/d13048.htm)
+
+## Novidades da v3.2
+
+| Funcionalidade | Descrição |
+|---|---|
+| **Ano de ingresso automático** | Extraído automaticamente da data de admissão no PDF — sem pergunta interativa |
+| **Lotação na narrativa** | Lotação do servidor extraída do PDF e inserida na introdução e agradecimentos |
+| **Epígrafe personalizada** | Seleção inteligente de citação baseada na lotação e perfil do servidor |
+| **Agradecimentos dinâmicos** | Menção personalizada à unidade de lotação |
+| **Capa com brasão** | Placeholder do brasão UFV na capa |
+| **PDF removido do fluxo** | Geração .pdf desativada — use o .docx para exportar PDF no Word/LibreOffice |
+| **DOCX sem markdown residual** | `*italic*` e `**bold**` convertidos corretamente em tabelas, listas e parágrafos |
 
 ## Novidades da v3.1
 
 | Funcionalidade | Descrição |
-|---|---|
+|---|---|---|
 | **Estrutura idêntica ao referencial** | Seções e tópicos conforme memorial aprovado pela CRSC-PCCTAE |
 | **Introdução completa** | 1.1 Quem sou e o que apresento / 1.2 A essência do meu fazer profissional (3 dimensões) / 1.3 Fundamentos legais (requisitos do Nível VI) |
 | **Anexos com narrativa fluida** | Cada critério descrito em prosa, não em listas: "Memorialista: um construtor de comissões", "Uma trajetória de liderança institucional", "A face acadêmica de minha trajetória" |
@@ -39,7 +59,8 @@ de 3 de julho de 2026** (Art. 13).
 | **UFV/ABNT OBRIGATÓRIA** | Arial 12pt, margens 3L/3T/2R/2B, espaçamento 1.5, paginação, capa institucional, folha de rosto com natureza, dedicatória e epígrafe sem título, agradecimentos com CAPES |
 | **Extração COMPLETA** | Todos os 17 critérios com seus itens numéricos e pontos — sem truncamento |
 | **Modo automático (`--auto`)** | Usa 2009 como ano de ingresso padrão, sem interação |
-| **PDF via pandoc + weasyprint** | Independe do LibreOffice (soffice); geração mais rápida e leve |
+| **Ano automático** | Ano de ingresso extraído automaticamente da data de admissão do PDF |
+| **Lotação na narrativa** | Lotação extraída do PDF e inserida na introdução |
 | **Parser robusto** | Lida com artefatos de OCR e layout tabular complexo do PDF |
 
 ## Fluxo
@@ -80,9 +101,8 @@ de 3 de julho de 2026** (Art. 13).
 [4] FORMATADOR → .md → .docx (pandoc + python-docx):
     │             A4, Arial 12pt, margens 3L/3T/2R/2B,
     │             espaçamento 1.5, paginação UFV
-    ▼
-[5] CONVERSOR → .md → .pdf (pandoc + weasyprint):
-                 Pronto para impressão/entrega
+    │
+    │   *Para gerar PDF, use "Salvar como PDF" no Word/LibreOffice*
 ```
 
 ## Detecção de Nível e Equivalência
@@ -146,7 +166,6 @@ python3 run.py "RSC Detalhado_03jun.pdf" -n "MARIA DA SILVA" -a 2005 --auto
 |---------|---------|-----------|
 | `*_MEMORIAL.md` | Markdown UTF-8 | Fonte de verdade — texto completo em prosa |
 | `*_MEMORIAL.docx` | Word — UFV/ABNT | Formatado Arial 12pt, margens UFV |
-| `*_MEMORIAL.pdf` | PDF | Pronto para impressão/entrega |
 
 ## Estrutura do memorial gerado (conforme Decreto nº 13.048/2026, Art. 13)
 
@@ -242,7 +261,7 @@ Além disso, **pandoc** deve estar instalado no sistema para conversão .md → 
 
 ```
 pdf-to-memorial-rsc/
-├── run.py               # Gerador autônomo v3.0
+├── run.py               # Gerador autônomo v3.2
 ├── SKILL.md             # Esta documentação
 ├── template/
 │   ├── memorial_blueprint.py   # Blueprint estrutural

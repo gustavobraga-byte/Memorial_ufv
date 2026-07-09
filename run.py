@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 =============================================================================
-PDF → Memorial RSC-PCCTAE — Gerador Autônomo v3.1
+PDF → Memorial RSC-PCCTAE — Gerador Autônomo v3.3
 =============================================================================
 Gera o memorial completo de Reconhecimento de Saberes e Competências (RSC-PCCTAE)
 autonomamente a partir do PDF oficial do Relatório Detalhado RSC emitido pelo
@@ -9,15 +9,30 @@ sistema da UFV (Pró-Reitoria de Gestão de Pessoas), em conformidade com o
 **Decreto nº 13.048, de 3 de julho de 2026** (Art. 13).
 
 v3.1 — Extração COMPLETA de todos os 17 critérios e itens do PDF,
-         geração de memorial com ESTRUTURA E TÓPICOS IDÊNTICOS ao
-         memorial de referência aprovado, formatação UFV/ABNT obrigatória.
+           geração de memorial com ESTRUTURA E TÓPICOS IDÊNTICOS ao
+           memorial de referência aprovado, formatação UFV/ABNT obrigatória.
+v3.2 — Ano de ingresso extraído automaticamente da data de admissão;
+           lotação incluída na narrativa; epígrafe e agradecimentos
+           personalizados; geração PDF removida do fluxo principal.
+v3.3 — --example gera memorial de exemplo com dados anônimos;
+           exemplos (.pdf/.docx) removidos da skill; run.py é a
+           fonte única dos exemplos via --example.
 
 Uso:
   python3 run.py <caminho_do_pdf> [--output-dir DIR] [--nome "Nome"]
                  [--ano-ingresso ANO] [--auto]
+  python3 run.py --example [--output-dir DIR] [--ano-ingresso ANO]
+
+  --example: gera memorial de exemplo com dados anônimos (placeholders),
+             sem necessidade de PDF de entrada. Útil para demonstração,
+             teste e regeneração dos arquivos de exemplo da skill.
+
+Exemplos:
+  python3 run.py "RSC Detalhado_fulano.pdf" -o saida
+  python3 run.py --example
 
 Dependências:
-  pip install pdfplumber python-docx weasyprint pyspellchecker
+  pip install pdfplumber python-docx pyspellchecker
 =============================================================================
 """
 
@@ -179,7 +194,7 @@ NIVEL_EQUIVALENCIA = {
            'destinado': 'servidor com diploma de mestrado',
            'percentual_extenso': 'setenta e cinco por cento'},
     'V': {'nome': 'V', 'equivalente': 'Mestre', 'percentual': '52%',
-          'destinado': 'servidor com certificado de pos-graduação lato sensu',
+           'destinado': 'servidor com certificado de pós-graduação lato sensu',
           'percentual_extenso': 'cinquenta e dois por cento'},
     'IV': {'nome': 'IV', 'equivalente': 'Graduacao', 'percentual': '30%',
            'destinado': 'servidor com diploma de graduação no ensino superior',
@@ -194,6 +209,8 @@ def parse_br(s):
     return float(s)
 
 def fmt_br(n):
+    if n is None:
+        return "0,00"
     return f"{n:.2f}".replace('.', ',')
 
 def get_nivel_info(rsc_raw):
@@ -211,20 +228,20 @@ def perguntar_ano_ingresso():
     ano_atual = datetime.now().year
     while True:
         try:
-            resp = input("\nEm que ano voce ingressou na UFV? ").strip()
+            resp = input("\nEm que ano você ingressou na UFV? ").strip()
             if not resp: continue
             ano = int(resp)
             if 1960 <= ano <= ano_atual: return ano
-            print(f"Ano invalido. Digite entre 1960 e {ano_atual}.")
+            print(f"Ano inválido. Digite entre 1960 e {ano_atual}.")
         except ValueError:
-            print("Digite um ano valido.")
+            print("Digite um ano válido.")
 
 
 # =============================================================================
 # PARSER DO PDF
 # =============================================================================
 class RSCPDFParser:
-    """Parser completo do Relatorio Detalhado RSC - extrai TODO o conteudo."""
+    """Parser completo do Relatório Detalhado RSC - extrai TODO o conteúdo."""
 
     def __init__(self, pdf_path):
         self.pdf_path = Path(pdf_path)
@@ -298,6 +315,10 @@ class RSCPDFParser:
 
     def _extract_criterios(self, pages):
         raw_text = '\n'.join(pages)
+        # Remove pipes and table border artifacts that confuse the parser
+        raw_text = re.sub(r'[|¦║]', ' ', raw_text)
+        # Remove leading special chars (R, C, S, U, V, F, etc.) before numbers at line start
+        raw_text = re.sub(r'^[A-Z]\s+(\d)', r'\1', raw_text, flags=re.MULTILINE)
         lines = raw_text.split('\n')
         ordem_map = {
             'I-01': 0, 'I-02': 1, 'I-03': 2, 'I-05': 3, 'I-06': 4,
@@ -345,9 +366,14 @@ class RSCPDFParser:
                 if im:
                     has_items = True
                     items.append({'num': im.group(1), 'texto': im.group(2).strip()})
-                pm = re.match(r'^\s*([\d,.]+)\s*pontos?\s*$', lines[k])
+                pm = re.search(r'(?<!\d)([\d,.]+)\s*pontos?\s*$', lines[k])
                 if pm:
                     pontos = parse_br(pm.group(1))
+                # Also try matching lines like "R 27.00 pontos" where a stray letter precedes
+                if pontos is None:
+                    pm2 = re.match(r'^\s*[A-Z]?\s*([\d,.]+)\s*pontos?\s*', lines[k])
+                    if pm2:
+                        pontos = parse_br(pm2.group(1))
                 k += 1
             crit_data = {
                 'key': key, 'romano': cm.group(1), 'numero': cm.group(2),
@@ -358,6 +384,29 @@ class RSCPDFParser:
             if key not in self.data['ordem_criterios']:
                 self.data['ordem_criterios'].append(key)
         self.data['ordem_criterios'].sort(key=lambda k: ordem_map.get(k, 99))
+
+
+# =============================================================================
+# Helper — acentua vogal anterior a "vel" (indele+vel → indelével)
+# =============================================================================
+def _acentuar_vogal_anterior(palavra):
+    """Acentua com agudo a última vogal de 'palavra' (parte anterior a 'vel').
+
+    Se a palavra já contiver caractere acentuado, retorna intacta para não
+    corromper palavras que já têm o acento correto (ex: 'possí' já está certo).
+    """
+    if not palavra:
+        return palavra
+    acentos = {'a': 'á', 'e': 'é', 'i': 'í', 'o': 'ó', 'u': 'ú'}
+    acentuados = set(acentos.values())
+    # Se a palavra já tem acento, preserva (evita corromper "possível" → "póssível")
+    if any(c in acentuados for c in palavra):
+        return palavra
+    # Encontra a última vogal NÃO acentuada
+    for idx in range(len(palavra) - 1, -1, -1):
+        if palavra[idx] in acentos:
+            return palavra[:idx] + acentos[palavra[idx]] + palavra[idx + 1:]
+    return palavra
 
 
 # =============================================================================
@@ -374,6 +423,7 @@ class MemorialGenerator:
         self.nível = data.get('nivel_info', NIVEL_PADRAO)
         self.nome = data['nome']
         self.data_admissao = data.get('data_admissao', '07/01/2009')
+        self.lotacao = data.get('lotacao', '')
         self.equivalente = self.nível['equivalente']
 
     def _narrativa_intro(self):
@@ -383,48 +433,50 @@ class MemorialGenerator:
         total_crit = self.d['total_criterios']
         ano_fim = self.ano_atual
         return [
-            "# 1 INTRODUÇÃO -- TRAJETORIA E FUNDAMENTOS\n",
+            "# 1 INTRODUÇÃO -- TRAJETÓRIA E FUNDAMENTOS\n",
             "\n",
             "## 1.1 Quem sou e o que apresento\n",
             "\n",
-            f"Meu nome e {self.nome}, matricula SIAPE {self.d['matricula']}, "
-            f"servidor público federal ocupante do cargo de {self.d['cargo']} na "
-            f"Universidade Federal de Viçosa, portador do título de {self.d['titulação']}. "
+            f"Meu nome é {self.nome}, matrícula SIAPE {self.d['matricula']}, "
+            f"servidor público federal ocupante do cargo de {self.d['cargo']}"
+            f"{', lotado(a) em ' + self.lotacao if self.lotacao else ''}, "
+            f"na Universidade Federal de Viçosa. "
+            f"Sou portador do título de {self.d['titulação']}. "
             f"Apresento este memorial descritivo com o objetivo de obter o Reconhecimento "
-                f"de Saberes e Competencias no Nível {self.nível['nome']} (RSC-PCCTAE {self.nível['nome']}), "
+            f"de Saberes e Competências no Nível {self.nível['nome']} (RSC-PCCTAE {self.nível['nome']}), "
             f"equivalente ao {self.equivalente}, conforme previsto na Lei nº 11.091/2005 "
             f"(alterada pela Lei nº 15.367/2026) e regulamentado pelo Decreto nº 13.048/2026.\n",
             "\n",
-            "Este memorial não e mera relacao de atividades. E a narrativa de uma trajetoria "
+            "Este memorial não é mera relação de atividades. É a narrativa de uma trajetória "
             f"profissional de {self.anos_carreira} anos -- de {self.ano_ingresso} a {ano_fim} -- "
-            f"construida na intersecao entre gestão de pessoas, planejamento institucional, "
-            f"inovação tecnologica e produção de conhecimento. Cada comissão que presidi, "
+            f"construída na interseção entre gestão de pessoas, planejamento institucional, "
+            f"inovação tecnológica e produção de conhecimento. Cada comissão que presidi, "
             f"cada banca que integrei, cada projeto que liderei, cada texto que publiquei, "
             f"cada curso que ministrei representa não apenas uma atividade realizada, mas "
-            f"um saber construido, uma competência desenvolvida, uma contribuicao singular "
-            f"a Universidade Federal de Viçosa.\n",
+            f"um saber construído, uma competência desenvolvida, uma contribuição singular "
+            f"à Universidade Federal de Viçosa.\n",
             "\n",
-            "## 1.2 A essencia do meu fazer profissional\n",
+            "## 1.2 A essência do meu fazer profissional\n",
             "\n",
             f"Como {self.d['cargo']}, minha atuação transcendeu o desempenho ordinário "
-            f"das atribuicoes do cargo. Ao longo de quase duas decadas, desenvolvi competências "
-            f"em tres dimensoes fundamentais:\n",
+            f"das atribuições do cargo. Ao longo de quase duas décadas, desenvolvi competências "
+            f"em três dimensões fundamentais:\n",
             "\n",
-            "**Dimensao normativo-regulatoria:** presidi comissões que revisaram e "
-            "atualizaram os marcos regulatorios de estágio probatorio, avaliação de "
-            "desempenho, assinaturas eletronicas e Programa de Gestao e Desempenho -- "
-            "contribuindo diretamente para o aperfeicoamento da gestão universitaria.\n",
+            "**Dimensão normativo-regulatória:** presidi comissões que revisaram e "
+            "atualizaram os marcos regulatórios de estágio probatório, avaliação de "
+            "desempenho, assinaturas eletrônicas e Programa de Gestão e Desempenho -- "
+            "contribuindo diretamente para o aperfeiçoamento da gestão universitária.\n",
             "\n",
-            "**Dimensao executivo-estrategica:** ocupei cargos de direcao e assessoramento "
-            "-- fui Assessor Especial da Pro-Reitoria de Gestao de Pessoas (CD-03/04), "
-            "respondi como Pro-Reitor de Gestao de Pessoas substituto (CD-02) e chefiei "
-            "setores e divisoes estrategicas (FG-01 a FG-04) -- o que me permitiu contribuir "
-            "para a formulacao e execução de politicas institucionais de gestão de pessoas.\n",
+            "**Dimensão executivo-estratégica:** ocupei cargos de direção e assessoramento "
+            "-- fui Assessor Especial da Pró-Reitoria de Gestão de Pessoas (CD-03/04), "
+            "respondi como Pró-Reitor de Gestão de Pessoas substituto (CD-02) e chefiei "
+            "setores e divisões estratégicas (FG-01 a FG-04) -- o que me permitiu contribuir "
+            "para a formulação e execução de políticas institucionais de gestão de pessoas.\n",
             "\n",
-            "**Dimensao academico-cientifica:** publiquei livro com ISBN, artigos em anais "
-            "de coloquios internacionais e periodico cientifico, e atuei como instrutor em "
-            "cursos de capacitação, difundindo conhecimento técnico e cientifico sobre "
-            "gestão universitaria.\n",
+            "**Dimensão acadêmico-científica:** publiquei livro com ISBN, artigos em anais "
+            "de colóquios internacionais e periódico científico, e atuei como instrutor em "
+            "cursos de capacitação, difundindo conhecimento técnico e científico sobre "
+            "gestão universitária.\n",
             "\n",
             "## 1.3 Fundamentos legais\n",
             "\n",
@@ -435,12 +487,12 @@ class MemorialGenerator:
             "\n",
             f"Para o RSC-PCCTAE Nível {self.nível['nome']}, exige-se:\n",
             "\n",
-            "- Pontuacao minima de 75 (setenta e cinco) pontos;\n",
-            "- Minimo de 7 (sete) critérios especificos dos Anexos I a VI;\n",
+            "- Pontuação mínima de 75 (setenta e cinco) pontos;\n",
+            "- Mínimo de 7 (sete) critérios específicos dos Anexos I a VI;\n",
             "- Pelo menos 1 (um) critério do Anexo VI (art. 3º, inciso VI);\n",
-            f"- Titulacao de {self.d['titulação']} (art. 5º, S 1, inciso VI), ja comprovada.\n",
+            f"- Titulação de {self.d['titulação']} (art. 5º, § 1, inciso VI), já comprovada.\n",
             "\n",
-            "Conforme demonstrarao as secoes seguintes, todos esses requisitos sao atendidos "
+            "Conforme demonstrarão as seções seguintes, todos esses requisitos são atendidos "
             f"com ampla margem.\n",
         ]
 
@@ -451,7 +503,7 @@ class MemorialGenerator:
         return [
             f"# {sec} ANEXO {num_rom} -- {titulo_anexo}\n",
             "\n",
-            f"*Art. 3, inciso {artigo_inciso} -- Pontuacao oficial: "
+            f"*Art. 3, inciso {artigo_inciso} -- Pontuação oficial: "
             f"{fmt_br(grupo['pontos'])} pts ({grupo['criterios']} critério(s))*\n",
             "\n",
         ]
@@ -464,58 +516,58 @@ class MemorialGenerator:
         md += [
             "## 2.1 Memorialista: um construtor de comissões\n",
             "\n",
-            "Se existe uma marca indelével na minha trajetoria, e a participação em comissões. "
+            "Se existe uma marca indelével na minha trajetória, é a participação em comissões. "
             "Iniciei como membro -- aprendendo, observando, contribuindo. Tornei-me presidente "
-            "-- liderando, decidindo, transformando. Foram mais de oitenta designacoes formais "
+            "-- liderando, decidindo, transformando. Foram mais de oitenta designações formais "
             "ao longo de 17 anos, que me permitiram compreender a universidade por dentro, "
-            "em suas dimensoes normativa, administrativa, pedagogica e estrategica.\n",
+            "em suas dimensões normativa, administrativa, pedagógica e estratégica.\n",
             "\n",
         ]
         # Item I-01
         if 'I-01' in c:
             md += [
-                f"## 2.2 Item I-1: Exercicio do mandato como membro de conselhos superiores e "
+                f"## 2.2 Item I-1: Exercício do mandato como membro de conselhos superiores e "
                 f"colegiados ({fmt_br(c['I-01']['pontos'])} pts)\n",
                 "\n",
-                "Fui designado representante dos pais no Conselho de Administracao do Laboratorio "
-                "de Desenvolvimento Infantil (LDI), onde participei das deliberacoes sobre a "
-                "gestão e as politicas educacionais da unidade -- uma experiência que ampliou "
-                "minha visao sobre a gestão participativa na universidade.\n",
+                "Fui designado representante dos pais no Conselho de Administração do Laboratório "
+                "de Desenvolvimento Infantil (LDI), onde participei das deliberações sobre a "
+                "gestão e as políticas educacionais da unidade -- uma experiência que ampliou "
+                "minha visão sobre a gestão participativa na universidade.\n",
                 "\n",
             ]
         # Item I-02
         if 'I-02' in c:
             qtd = len(c['I-02']['itens'])
             md += [
-                f"## 2.3 Item I-2: Coordenacao e presidencia de comissões "
+                f"## 2.3 Item I-2: Coordenação e presidência de comissões "
                 f"({fmt_br(c['I-02']['pontos'])} pts)\n",
                 "\n",
                 f"Presidi ou coordenei {qtd} ({'nove' if qtd==9 else str(qtd)}) comissões "
-                f"ao longo da carreira. Cada presidencia representou um desafio distincto. "
-                f"A comissão de assinaturas eletronicas, por exemplo, exigiu-me estudo "
-                f"aprofundado da Medida Provisoria 2.200-2/2001 e da legislação correlata "
-                f"para propor norma que viabilizasse a tramitacao eletronica com validade "
-                f"juridica. A comissão do PGD demandou a compreensão de um novo paradigma "
-                f"de gestão por resultados e sua adaptacao a realidade da UFV.\n",
+                f"ao longo da carreira. Cada presidência representou um desafio distinto. "
+                f"A comissão de assinaturas eletrônicas, por exemplo, exigiu-me estudo "
+                f"aprofundado da Medida Provisória 2.200-2/2001 e da legislação correlata "
+                f"para propor norma que viabilizasse a tramitação eletrônica com validade "
+                f"jurídica. A comissão do PGD demandou a compreensão de um novo paradigma "
+                f"de gestão por resultados e sua adaptação à realidade da UFV.\n",
                 "\n",
             ]
         # Item I-03
         if 'I-03' in c:
             qtd = len(c['I-03']['itens'])
             md += [
-                f"## 2.4 Item I-3: Participacao como membro de comissões "
+                f"## 2.4 Item I-3: Participação como membro de comissões "
                 f"({fmt_br(c['I-03']['pontos'])} pts)\n",
                 "\n",
                 f"Participei como membro de {qtd} comissões, incluindo bancas examinadoras "
-                f"centrais de concursos públicos (2009 a {self.ano_atual}), Comissao de "
-                f"Gestao de Integridade (Port. 0863/2019/RTR), Comissao de Assessoramento "
-                f"do Relatorio de Gestao (2022-2025), Comissao de Elaboracao do PDI 2024-2029, "
-                f"Comissao Especial de Estudos do PASES (Port. 0014/2023/Cepe), Comissao "
-                f"Organizadora do UFV 60+ (Port. 074/2025/PRE e 023/2026/PRE), e Comissao "
-                f"de Adequacao do Estagio Probatorio (Port. 0224/2025/RTR).\n",
+                f"centrais de concursos públicos (2009 a {self.ano_atual}), Comissão de "
+                f"Gestão de Integridade (Port. 0863/2019/RTR), Comissão de Assessoramento "
+                f"do Relatório de Gestão (2022-2025), Comissão de Elaboração do PDI 2024-2029, "
+                f"Comissão Especial de Estudos do PASES (Port. 0014/2023/Cepe), Comissão "
+                f"Organizadora do UFV 60+ (Port. 074/2025/PRE e 023/2026/PRE), e Comissão "
+                f"de Adequação do Estágio Probatório (Port. 0224/2025/RTR).\n",
                 "\n",
-                "Esta atuação continua por 17 anos me deu conhecimento aprofundado dos ritos "
-                "e procedimentos de concursos públicos no ambito do Decreto nº 9.739/2019 e "
+                "Esta atuação contínua por 17 anos me deu conhecimento aprofundado dos ritos "
+                "e procedimentos de concursos públicos no âmbito do Decreto nº 9.739/2019 e "
                 "legislação correlata.\n",
                 "\n",
             ]
@@ -523,25 +575,25 @@ class MemorialGenerator:
         if 'I-05' in c:
             qtd = len(c['I-05']['itens'])
             md += [
-                f"## 2.5 Item I-5: Organizacao, fiscalização e execução de vestibulares e "
+                f"## 2.5 Item I-5: Organização, fiscalização e execução de vestibulares e "
                 f"concursos ({fmt_br(c['I-05']['pontos'])} pts)\n",
                 "\n",
                 f"Atuei em {qtd} (vinte e oito) processos seletivos e concursos públicos, "
-                f"desde o Vestibular UFV 2010 ate o Concurso Publico UFV {self.ano_atual}. "
+                f"desde o Vestibular UFV 2010 até o Concurso Público UFV {self.ano_atual}. "
                 f"Essa experiência continuada me proporcionou domínio integral dos fluxos "
-                f"operacionais de selecao de servidores e estudantes.\n",
+                f"operacionais de seleção de servidores e estudantes.\n",
                 "\n",
             ]
         # Item I-06
         if 'I-06' in c:
             qtd = len(c['I-06']['itens'])
             md += [
-                f"## 2.6 Item I-6: Elaboracao, revisao e correção de provas "
+                f"## 2.6 Item I-6: Elaboração, revisão e correção de provas "
                 f"({fmt_br(c['I-06']['pontos'])} pts)\n",
                 "\n",
-                f"Coordenei ou integrei {qtd} bancas de elaboração e revisao de provas, "
+                f"Coordenei ou integrei {qtd} bancas de elaboração e revisão de provas, "
                 f"atuando como coordenador na maioria delas a partir de 2019. Destaque para "
-                f"a consolidacao da minha lideranca técnica nessa area.\n",
+                f"a consolidação da minha liderança técnica nessa área.\n",
                 "\n",
             ]
         return md
@@ -552,24 +604,24 @@ class MemorialGenerator:
         md = self._anexo_intro('II', 'PARTICIPAÇÃO EM PROJETOS INSTITUCIONAIS', 'II', g)
         c = self.d['criterios']
         md += [
-            "## 3.1 Pesquisa academica: o REUNI como objeto de estudo\n",
+            "## 3.1 Pesquisa acadêmica: o REUNI como objeto de estudo\n",
             "\n",
             "Participei como pesquisador do projeto \"Programa de Apoio a Planos de "
-            "Reestruturacao e Expansao das Universidades Federais -- REUNI: limites e "
+            "Reestruturação e Expansão das Universidades Federais -- REUNI: limites e "
             "potencialidades na gestão das Instituições Federais de Ensino Superior em "
             "Minas Gerais\" (Processo 60204259518). Esta pesquisa, iniciada em 2010, "
-            "resultou em livro, artigos e apresentacoes em coloquios internacionais -- "
+            "resultou em livro, artigos e apresentações em colóquios internacionais -- "
             "conforme detalhado no Anexo VI.\n",
             "\n",
         ]
         if 'II-07' in c:
             md += [
-                "## 3.2 Avaliacao de trabalhos academicos\n",
-                "\n",
-                "Participei como membro de banca de avaliação de Trabalho de Conclusao de "
-                "Curso em Administracao, contribuindo para a formação de novos profissionais.\n",
-                "\n",
-            ]
+                    "## 3.2 Avaliação de trabalhos acadêmicos\n",
+                    "\n",
+                    "Participei como membro de banca de avaliação de Trabalho de Conclusão de "
+                    "Curso em Administração, contribuindo para a formação de novos profissionais.\n",
+                    "\n",
+                ]
         return md
 
     def _narrativa_anexo_III(self):
@@ -590,21 +642,21 @@ class MemorialGenerator:
         c = self.d['criterios']
         if g['pontos'] > 0:
             md += [
-                "Fui designado para atuação em sistemas estruturantes da administracao "
+                "Fui designado para atuação em sistemas estruturantes da administração "
                 "pública federal, incluindo COMPREV, e-SIAPE, SIAPE, SIGEPE, REDE SERPRO, "
-                "SiapeNet e SIASS, contribuindo para a operacao e o aperfeicoamento de "
-                "sistemas essenciais a gestão de pessoas no servico público federal.\n",
+                "SiapeNet e SIASS, contribuindo para a operação e o aperfeiçoamento de "
+                "sistemas essenciais à gestão de pessoas no serviço público federal.\n",
                 "\n",
             ]
             if 'IV-01' in c:
                 md += [
                     f"## 5.1 Item IV-1: Sistemas estruturantes ({fmt_br(c['IV-01']['pontos'])} pts)\n",
                     "\n",
-                    "Atuei em atividades de execução e operacao no Subsistema Integrado de "
-                    "atencao a Saude do Servidor (SIASS), no Sistema de Pessoal Civil da "
-                    "Administracao Federal (SiapeNet), no e-SIAPE, no Sistema de Gestao de "
+                    "Atuei em atividades de execução e operação no Subsistema Integrado de "
+                    "Atenção à Saúde do Servidor (SIASS), no Sistema de Pessoal Civil da "
+                    "Administração Federal (SiapeNet), no e-SIAPE, no Sistema de Gestão de "
                     "Pessoas (SIGEPE), e na Rede SERPRO, sistemas estruturantes da "
-                    "administracao pública federal.\n",
+                    "administração pública federal.\n",
                     "\n",
                 ]
             if 'IV-07' in c:
@@ -612,19 +664,19 @@ class MemorialGenerator:
                     f"## 5.2 Item IV-7: Sistemas e processos institucionais "
                     f"({fmt_br(c['IV-07']['pontos'])} pts)\n",
                     "\n",
-                    "Desenvolvi e operacionalizei sistemas e processos de trabalho no ambito "
+                    "Desenvolvi e operacionalizei sistemas e processos de trabalho no âmbito "
                     "da gestão de pessoas, incluindo o Sisvest (sistema para gerenciamento de "
                     "processos seletivos) e o Gespe-Documentos, contribuindo para a "
-                    "modernizacao e eficiencia dos fluxos administrativos.\n",
+                    "modernização e eficiência dos fluxos administrativos.\n",
                     "\n",
                 ]
         else:
             md += [
                 "O sistema oficial registra minha designação para atuação em sistemas "
-                "estruturantes da administracao pública federal (COMPREV, e-SIAPE, SIAPE, "
+                "estruturantes da administração pública federal (COMPREV, e-SIAPE, SIAPE, "
                 "SIGEPE, REDE SERPRO, SiapeNet, SIASS). Estas atividades, contudo, não "
-                "foram pontuadas no sistema, possivelmente por pendencia de comprovacao "
-                "documental. Registro-as para conhecimento da CRSC-PCCTAE, que podera "
+                "foram pontuadas no sistema, possivelmente por pendência de comprovação "
+                "documental. Registro-as para conhecimento da CRSC-PCCTAE, que poderá "
                 "avaliar seu enquadramento.\n",
                 "\n",
             ]
@@ -633,27 +685,27 @@ class MemorialGenerator:
     def _narrativa_anexo_V(self):
         """6 ANEXO V — EXERCÍCIO DE FUNÇÕES DE DIREÇÃO E ASSESSORAMENTO"""
         g = self.d['grupos'][4]
-        md = self._anexo_intro('V', 'EXERCICIO DE FUNÇÕES DE DIRECAO E ASSESSORAMENTO', 'V', g)
+        md = self._anexo_intro('V', 'EXERCÍCIO DE FUNÇÕES DE DIREÇÃO E ASSESSORAMENTO', 'V', g)
         c = self.d['criterios']
         md += [
-            "## 6.1 Uma trajetoria de lideranca institucional\n",
+            "## 6.1 Uma trajetória de liderança institucional\n",
             "\n",
-            "Um dos aspectos mais significativos da minha carreira foi o exercicio de "
-            "cargos de direcao e funcoes gratificadas ao longo de mais de uma decada. "
-            "Essas posicoes me permitiram contribuir diretamente para a formulacao e "
-            "execução de politicas institucionais de gestão de pessoas na UFV.\n",
+            "Um dos aspectos mais significativos da minha carreira foi o exercício de "
+            "cargos de direção e funções gratificadas ao longo de mais de uma década. "
+            "Essas posições me permitiram contribuir diretamente para a formulação e "
+            "execução de políticas institucionais de gestão de pessoas na UFV.\n",
             "\n",
         ]
         if 'V-01' in c:
             qtd = len(c['V-01']['itens'])
             md += [
-                f"## 6.2 Item V-1: CD-02 -- Pro-Reitor de Gestao de Pessoas substituto "
+                f"## 6.2 Item V-1: CD-02 -- Pró-Reitor de Gestão de Pessoas substituto "
                 f"({fmt_br(c['V-01']['pontos'])} pts)\n",
                 "\n",
-                f"Em múltiplas ocasioes entre 2019 e {self.ano_atual}, fui designado para "
-                f"responder pela Pro-Reitoria de Gestao de Pessoas da UFV na ausencia do "
-                f"titular. Essa experiência me proporcionou visao sistemica da gestão "
-                f"universitaria e responsabilidade direta sobre decisoes estrategicas.\n",
+                f"Em múltiplas ocasiões entre 2019 e {self.ano_atual}, fui designado para "
+                f"responder pela Pró-Reitoria de Gestão de Pessoas da UFV na ausência do "
+                f"titular. Essa experiência me proporcionou visão sistêmica da gestão "
+                f"universitária e responsabilidade direta sobre decisões estratégicas.\n",
                 "\n",
             ]
         if 'V-02' in c:
@@ -664,10 +716,10 @@ class MemorialGenerator:
                     f"## 6.3 Item V-2: CD-03/04 -- Assessor Especial da PGP titular "
                     f"({fmt_br(c['V-02']['pontos'])} pts)\n",
                     "\n",
-                    "Fui designado Assessor Especial da Pro-Reitoria de Gestao de Pessoas, "
-                    "atuando diretamente no assessoramento a alta administracao da PGP, "
-                    "contribuindo para a formulacao de politicas, a analise de processos "
-                    "estrategicos e a tomada de decisoes institucionais.\n",
+                    "Fui designado Assessor Especial da Pró-Reitoria de Gestão de Pessoas, "
+                    "atuando diretamente no assessoramento à alta administração da PGP, "
+                    "contribuindo para a formulação de políticas, a análise de processos "
+                    "estratégicos e a tomada de decisões institucionais.\n",
                     "\n",
                 ]
         if 'V-03' in c:
@@ -675,12 +727,12 @@ class MemorialGenerator:
                 f"## 6.4 Item V-3: FG-01/02 -- Chefe de Divisao "
                 f"({fmt_br(c['V-03']['pontos'])} pts)\n",
                 "\n",
-                "Fui titular da Chefia da Divisao de Desenvolvimento de Pessoas da PGP "
+                "Fui titular da Chefia da Divisão de Desenvolvimento de Pessoas da PGP "
                 "e, anteriormente, da Chefia do Setor de Provimento, Acompanhamento e "
-                "Avaliacao. Como substituto, respondi pela Chefia da Divisao de "
-                "Desenvolvimento de Pessoas em inumeras ocasioes. Essas posicoes me "
+                "Avaliação. Como substituto, respondi pela Chefia da Divisão de "
+                "Desenvolvimento de Pessoas em inúmeras ocasiões. Essas posições me "
                 "permitiram gerir equipes, coordenar processos de desenvolvimento de "
-                "servidores e implementar politicas de capacitação.\n",
+                "servidores e implementar políticas de capacitação.\n",
                 "\n",
             ]
         if 'V-04' in c:
@@ -688,9 +740,9 @@ class MemorialGenerator:
                 f"## 6.5 Item V-4: FG-03+ -- Chefia de Setor "
                 f"({fmt_br(c['V-04']['pontos'])} pts)\n",
                 "\n",
-                "Fui titular da Chefia do Setor de Capacitacao e Treinamento e, "
+                "Fui titular da Chefia do Setor de Capacitação e Treinamento e, "
                 "posteriormente, da Chefia do Setor de Provimento, Acompanhamento e "
-                "Avaliacao, acumulando meses de exercicio em posicoes de chefia.\n",
+                "Avaliação, acumulando meses de exercício em posições de chefia.\n",
                 "\n",
             ]
         return md
@@ -702,25 +754,25 @@ class MemorialGenerator:
                                 'CIENTÍFICO E TÉCNICO', 'VI', g)
         c = self.d['criterios']
         md += [
-            "## 7.1 A face academica de minha trajetoria\n",
+            "## 7.1 A face acadêmica de minha trajetória\n",
             "\n",
-            "Sempre acreditei que a gestão universitaria, para ser efetiva, precisa estar "
-            "ancorada em conhecimento cientifico. Por isso, ao longo de minha carreira, "
-            "busquei não apenas executar, mas tambem produzir e difundir conhecimento "
+            "Sempre acreditei que a gestão universitária, para ser efetiva, precisa estar "
+            "ancorada em conhecimento científico. Por isso, ao longo de minha carreira, "
+            "busquei não apenas executar, mas também produzir e difundir conhecimento "
             "sobre a gestão das instituições federais de ensino.\n",
             "\n",
         ]
         if 'VI-09' in c:
             md += [
-                f"## 7.2 Item VI-9: Publicacao de livro com ISBN "
+                f"## 7.2 Item VI-9: Publicação de livro com ISBN "
                 f"({fmt_br(c['VI-09']['pontos'])} pts)\n",
                 "\n",
-                "Publiquei o livro \"Consequencias, limites e potencialidades na "
+                "Publiquei o livro \"Consequências, limites e potencialidades na "
                 "implementação do REUNI\", em coautoria com Luiz Antonio Abrantes e "
-                "Antonio Carlos Brunozi Junior, pela editora Novas Edicoes Academicas "
-                "(Sao Paulo, SP), ISBN 978-3-639-74424-8. A obra resultou de pesquisa "
-                "academica sobre o Programa de Apoio a Planos de Reestruturacao e "
-                "Expansao das Universidades Federais (REUNI) e suas implicações para "
+                "Antonio Carlos Brunozi Junior, pela editora Novas Edições Acadêmicas "
+                "(São Paulo, SP), ISBN 978-3-639-74424-8. A obra resultou de pesquisa "
+                "acadêmica sobre o Programa de Apoio a Planos de Reestruturação e "
+                "Expansão das Universidades Federais (REUNI) e suas implicações para "
                 "a gestão das IFES mineiras.\n",
                 "\n",
             ]
@@ -729,34 +781,34 @@ class MemorialGenerator:
                 f"## 7.3 Item VI-10: Artigos publicados "
                 f"({fmt_br(c['VI-10']['pontos'])} pts)\n",
                 "\n",
-                "Publiquei os seguintes trabalhos academicos:\n",
+                "Publiquei os seguintes trabalhos acadêmicos:\n",
                 "\n",
                 "LUGÃO, R. G.; ABRANTES, L. A.; BRUNOZI JR., A. C.; SILVA, F. C.; SOUZA, A. P. "
-                "Reforma Universitaria no Brasil: uma analise dos documentos oficiais e da "
-                "produção cientifica sobre o Reuni. **X Coloquio Sobre Gestión Universitaria "
-                "en America del Sur**, Mar del Plata, 2010. -- Anais de evento internacional.\n",
+                "Reforma Universitária no Brasil: uma análise dos documentos oficiais e da "
+                "produção científica sobre o Reuni. **X Colóquio Sobre Gestión Universitaria "
+                "en América del Sur**, Mar del Plata, 2010. -- Anais de evento internacional.\n",
                 "\n",
                 "LUGÃO, R. G.; ABRANTES, L. A.; BRUNOZI JUNIOR, A. C.; BRUNOZI, M. A. V. "
-                "Caracterizacao, limites e potencialidades do programa REUNI em IFES mineiras: "
-                "um estudo multicaso. **XIII Coloquio Internacional sobre Gestao Universitaria "
-                "nas Americas**, Buenos Aires, 2013. -- Anais de evento internacional.\n",
+                "Caracterização, limites e potencialidades do programa REUNI em IFES mineiras: "
+                "um estudo multicaso. **XIII Colóquio Internacional sobre Gestão Universitária "
+                "nas Américas**, Buenos Aires, 2013. -- Anais de evento internacional.\n",
                 "\n",
                 "LUGÃO, R. G.; ABRANTES, L. A.; BRUNOZI JUNIOR, A. C. Planejamento, "
                 "implementação e avaliação do REUNI: Um Estudo em Universidades Mineiras. "
-                "**Estudo & Debate (Online)**, v. 22, p. 78-96, 2015. -- Artigo em periodico "
-                "cientifico.\n",
+                "**Estudo & Debate (Online)**, v. 22, p. 78-96, 2015. -- Artigo em periódico "
+                "científico.\n",
                 "\n",
             ]
         if 'VI-15' in c:
             md += [
-                f"## 7.4 Item VI-15: Instrutor em acoes formativas "
+                f"## 7.4 Item VI-15: Instrutor em ações formativas "
                 f"({fmt_br(c['VI-15']['pontos'])} pts)\n",
                 "\n",
                 "Atuei como instrutor nos seguintes cursos de capacitação:\n",
                 "\n",
-                "- 01/2009: Fundamentos em Administracao -- Gestao de Pessoas -- CEPET (20/07/2009)\n",
-                "- 06/2012: Treinamento de Integracao para Novos Servidores -- UFV (17/04/2012)\n",
-                f"- 04/{self.ano_atual}: Reconhecendo Saberes e Competencias: Entenda o "
+                "- 01/2009: Fundamentos em Administração -- Gestão de Pessoas -- CEPET (20/07/2009)\n",
+                "- 06/2012: Treinamento de Integração para Novos Servidores -- UFV (17/04/2012)\n",
+                f"- 04/{self.ano_atual}: Reconhecendo Saberes e Competências: Entenda o "
                 f"RSC-PCCTAE -- UFV (06/05/{self.ano_atual})\n",
                 "\n",
                 "Essas atividades de instrutoria demonstram minha capacidade de difundir "
@@ -765,12 +817,12 @@ class MemorialGenerator:
             ]
         if 'VI-16' in c:
             md += [
-                f"## 7.5 Item VI-16: Coordenacao de eventos "
+                f"## 7.5 Item VI-16: Coordenação de eventos "
                 f"({fmt_br(c['VI-16']['pontos'])} pts)\n",
                 "\n",
-                "Coordenei o curso \"Redacao Oficial\" (03/2009), contribuindo para a "
+                "Coordenei o curso \"Redação Oficial\" (03/2009), contribuindo para a "
                 "capacitação de servidores na produção de documentos oficiais conforme "
-                "as normas da Administracao Publica Federal.\n",
+                "as normas da Administração Pública Federal.\n",
                 "\n",
             ]
         return md
@@ -787,9 +839,9 @@ class MemorialGenerator:
         md = [
             "# 8 SÍNTESE DE PONTUAÇÃO\n",
             "\n",
-            "## 8.1 Quadro geral -- Pontuacao oficial (sistema UFV)\n",
+            "## 8.1 Quadro geral -- Pontuação oficial (sistema UFV)\n",
             "\n",
-            "| Anexo | Conteudo | Criterios | Pontuacao |\n",
+            "| Anexo | Conteúdo | Critérios | Pontuação |\n",
             "|-------|----------|-----------|-----------|\n",
         ]
         for grp in g:
@@ -802,17 +854,17 @@ class MemorialGenerator:
         md += [
             f"| | **Total Geral** | **{total_crit}** | **{total}** |\n",
             "\n",
-            "## 8.2 Verificacao dos requisitos legais para RSC-PCCTAE VI\n",
+            "## 8.2 Verificação dos requisitos legais para RSC-PCCTAE VI\n",
             "\n",
             "| Requisito | Exigido | Atendido |\n",
             "|-----------|---------|----------|\n",
-            f"| Pontuacao total | Minimo 75,00 pts | **{total} pts** -- Atende |\n",
-            f"| Criterios especificos | Minimo 7 | **{total_crit} critérios** -- Atende |\n",
+            f"| Pontuação total | Mínimo 75,00 pts | **{total} pts** -- Atende |\n",
+            f"| Critérios específicos | Mínimo 7 | **{total_crit} critérios** -- Atende |\n",
             f"| Anexo VI (produção) | Pelo menos 1 critério | **{g[5]['criterios']} critério(s)** -- Atende |\n",
             f"| Anexos com pontuação | -- | **{total_com_pontos} anexos** com pontuação |\n",
-            f"| Titulacao | {self.d['titulação']} | Comprovada -- Atende |\n",
+            f"| Titulação | {self.d['titulação']} | Comprovada -- Atende |\n",
             "\n",
-            "Todos os requisitos legais para concessão do RSC-PCCTAE Nível VI sao "
+            "Todos os requisitos legais para concessão do RSC-PCCTAE Nível VI são "
             "atendidos com ampla margem.\n",
         ]
         return md
@@ -827,53 +879,53 @@ class MemorialGenerator:
             "\n",
             "## 9.1 Que saberes construi?\n",
             "\n",
-            f"Ao longo de {self.anos_carreira} anos de servico público na UFV, não me "
-            f"limitei a executar tarefas. Construi saberes. Os principais sao:\n",
+            f"Ao longo de {self.anos_carreira} anos de serviço público na UFV, não me "
+            f"limitei a executar tarefas. Construí saberes. Os principais são:\n",
             "\n",
             "**Saber normativo:** aprendi a ler, interpretar e propor normas de gestão "
-            "de pessoas. Presidi comissões que revisaram resolucoes historicas da UFV -- "
-            "a Res. Consu 03/2006 (estágio probatorio) e a Res. 08/2008 (avaliação de "
-            "desempenho) --, contribuindo para sua adequacao a legislação superveniente.\n",
+            "de pessoas. Presidi comissões que revisaram resoluções históricas da UFV -- "
+            "a Res. Consu 03/2006 (estágio probatório) e a Res. 08/2008 (avaliação de "
+            "desempenho) --, contribuindo para sua adequação à legislação superveniente.\n",
             "\n",
-            "**Saber de gestão:** ocupei posicoes de chefia, assessoramento e direcao "
+            "**Saber de gestão:** ocupei posições de chefia, assessoramento e direção "
             "que me permitiram compreender a universidade como sistema complexo. Como "
-            "Assessor Especial da PGP, participei da formulacao de politicas institucionais. "
-            "Como Pro-Reitor substituto, respondi por decisoes estrategicas.\n",
+            "Assessor Especial da PGP, participei da formulação de políticas institucionais. "
+            "Como Pró-Reitor substituto, respondi por decisões estratégicas.\n",
             "\n",
-            "**Saber academico-cientifico:** pesquisei, publiquei livro e artigos sobre "
-            "o REUNI, contribuindo para o conhecimento sobre gestão universitaria no "
-            "Brasil. Minha produção cientifica demonstra que a pratica profissional, "
+            "**Saber acadêmico-científico:** pesquisei, publiquei livro e artigos sobre "
+            "o REUNI, contribuindo para o conhecimento sobre gestão universitária no "
+            "Brasil. Minha produção científica demonstra que a prática profissional, "
             "quando refletida academicamente, gera conhecimento relevante para a "
             "comunidade.\n",
             "\n",
-            "**Saber pedagogico:** formei servidores como instrutor em cursos de "
-            "capacitação e orientei colegas em estágio probatorio, transmitindo "
+            "**Saber pedagógico:** formei servidores como instrutor em cursos de "
+            "capacitação e orientei colegas em estágio probatório, transmitindo "
             "conhecimentos e contribuindo para o desenvolvimento institucional.\n",
             "\n",
-            "**Saber tecnologico:** liderei a implantacao do SEI na Gestao de Pessoas, "
-            "participei da regulamentacao de assinaturas eletronicas e fui Agente SEI, "
-            "contribuindo para a modernizacao tecnologica da UFV.\n",
+            "**Saber tecnológico:** liderei a implantação do SEI na Gestão de Pessoas, "
+            "participei da regulamentação de assinaturas eletrônicas e fui Agente SEI, "
+            "contribuindo para a modernização tecnológica da UFV.\n",
             "\n",
-            "## 9.2 Qual minha contribuicao singular?\n",
+            "## 9.2 Qual minha contribuição singular?\n",
             "\n",
-            "Minha maior contribuicao a UFV talvez seja ter demonstrado que um Tecnico "
+            "Minha maior contribuição à UFV talvez seja ter demonstrado que um Técnico "
             "em Assuntos Educacionais pode -- e deve -- transcender as fronteiras de seu "
             "cargo. Publiquei livro quando muitos limitam-se a executar rotinas. Presidi "
-            "comissões estrategicas quando muitos contentam-se em participar. Ocupei "
-            "cadeiras de direcao quando muitos julgam-nas inacessiveis. Formei servidores "
+            "comissões estratégicas quando muitos contentam-se em participar. Ocupei "
+            "cadeiras de direção quando muitos julgam-nas inacessíveis. Formei servidores "
             "quando muitos guardam conhecimento para si.\n",
             "\n",
-            "Esta trajetoria -- que mescla gestão, pesquisa, docência e inovação -- e a "
-            "demonstracao viva de que os saberes construidos na pratica profissional, "
-            "quando refletidos sistematicamente, equivalem-se a formação academica "
+            "Esta trajetória -- que mescla gestão, pesquisa, docência e inovação -- é a "
+            "demonstração viva de que os saberes construídos na prática profissional, "
+            "quando refletidos sistematicamente, equivalem-se à formação acadêmica "
             f"stricto sensu que o RSC-{self.nível['nome']} reconhece.\n",
             "\n",
             "## 9.3 Pedido\n",
             "\n",
             "Ante o exposto, com fundamento na Lei nº 11.091/2005 (alterada pela Lei nº "
-            "15.367/2026), no Decreto nº 13.048/2026 e na documentacao comprobatoria "
-            f"anexa, requeiro a CRSC-PCCTAE da Universidade Federal de Viçosa o "
-            f"deferimento da concessão do Reconhecimento de Saberes e Competencias no "
+            "15.367/2026), no Decreto nº 13.048/2026 e na documentação comprobatória "
+            f"anexa, requeiro à CRSC-PCCTAE da Universidade Federal de Viçosa o "
+            f"deferimento da concessão do Reconhecimento de Saberes e Competências no "
             f"nível RSC-PCCTAE {self.nível['nome']}.\n",
             "\n",
             "Nestes termos, pede deferimento.\n",
@@ -888,57 +940,186 @@ class MemorialGenerator:
 
     def _referencias(self):
         return [
-            "# REFERENCIAS\n",
+            "# REFERÊNCIAS\n",
             "\n",
-            "BRASIL. **Lei nº 11.091**, de 12 de janeiro de 2005. Dispoe sobre a "
-            "estruturação do Plano de Carreira dos Cargos Tecnico-Administrativos em "
-            "Educacao, no ambito das Instituições Federais de Ensino vinculadas ao "
-            "Ministério da Educação, e da outras providências. **Diario Oficial da "
-            "Uniao**: Brasilia, DF, 13 jan. 2005.\n",
+            "BRASIL. **Lei nº 11.091**, de 12 de janeiro de 2005. Dispõe sobre a "
+            "estruturação do Plano de Carreira dos Cargos Técnico-Administrativos em "
+            "Educação, no âmbito das Instituições Federais de Ensino vinculadas ao "
+            "Ministério da Educação, e dá outras providências. **Diário Oficial da "
+            "União**: Brasília, DF, 13 jan. 2005.\n",
             "\n",
-            "BRASIL. **Lei nº 15.367**, de 30 de marco de 2026. Altera a Lei nº "
+            "BRASIL. **Lei nº 15.367**, de 30 de março de 2026. Altera a Lei nº "
             "11.091/2005 para atualizar o Plano de Carreira dos Cargos "
-            "Tecnico-Administrativos em Educacao.\n",
+            "Técnico-Administrativos em Educação.\n",
             "\n",
             "BRASIL. **Decreto nº 13.048**, de 3 de julho de 2026. Estabelece critérios "
-            "e procedimentos para o Reconhecimento de Saberes e Competencias (RSC) no "
-            "ambito do PCCTAE. Disponível em: " + DECRETO_URL + ". Acesso em: "
+            "e procedimentos para o Reconhecimento de Saberes e Competências (RSC) no "
+            "âmbito do PCCTAE. Disponível em: " + DECRETO_URL + ". Acesso em: "
             + datetime.now().strftime('%d %b. %Y') + ".\n",
             "\n",
-            "LUGÃO, R. G.; ABRANTES, L. A.; BRUNOZI JUNIOR, A. C. **Consequencias, "
-            "limites e potencialidades na implementação do REUNI**. Sao Paulo: Novas "
-            "Edicoes Academicas, 2015. ISBN 9783639744248.\n",
+            "LUGÃO, R. G.; ABRANTES, L. A.; BRUNOZI JUNIOR, A. C. **Consequências, "
+            "limites e potencialidades na implementação do REUNI**. São Paulo: Novas "
+            "Edições Acadêmicas, 2015. ISBN 9783639744248.\n",
             "\n",
             "LUGÃO, R. G.; ABRANTES, L. A.; BRUNOZI JR., A. C.; SILVA, F. C.; SOUZA, A. P. "
-            "Reforma Universitaria no Brasil: uma analise dos documentos oficiais e da "
-            "produção cientifica sobre o Reuni. In: **X Coloquio Sobre Gestión "
-            "Universitaria en America del Sur**, Mar del Plata, 2010.\n",
+            "Reforma Universitária no Brasil: uma análise dos documentos oficiais e da "
+            "produção científica sobre o Reuni. In: **X Colóquio Sobre Gestión "
+            "Universitaria en América del Sur**, Mar del Plata, 2010.\n",
             "\n",
             "LUGÃO, R. G.; ABRANTES, L. A.; BRUNOZI JUNIOR, A. C.; BRUNOZI, M. A. V. "
-            "Caracterizacao, limites e potencialidades do programa REUNI em IFES "
-            "mineiras: um estudo multicaso. In: **XIII Coloquio Internacional sobre "
-            "Gestao Universitaria nas Americas**, Buenos Aires, 2013.\n",
+            "Caracterização, limites e potencialidades do programa REUNI em IFES "
+            "mineiras: um estudo multicaso. In: **XIII Colóquio Internacional sobre "
+            "Gestão Universitária nas Américas**, Buenos Aires, 2013.\n",
             "\n",
             "LUGÃO, R. G.; ABRANTES, L. A.; BRUNOZI JUNIOR, A. C. Planejamento, "
             "implementação e avaliação do REUNI: Um Estudo em Universidades Mineiras. "
             "**Estudo & Debate (Online)**, v. 22, p. 78-96, 2015.\n",
             "\n",
-            "PIRES, Alice Regina Pinto; SILVA, Bruna (org.). **Normalizacao de "
-            "trabalhos academicos**: atualizada conforme ABNTs NBR 14724/2024, NBR "
+            "PIRES, Alice Regina Pinto; SILVA, Bruna (org.). **Normalização de "
+            "trabalhos acadêmicos**: atualizada conforme ABNTs NBR 14724/2024, NBR "
             "6023/2018 e NBR 10520/2023. Viçosa, MG: UFV, Biblioteca Central, 2025.\n",
         ]
 
-    def _normalizar(self, texto):
-        """Pós-processamento sistemático: acentos + correções especiais."""
-        texto = normalizar_acentos(texto)
-        # "n" → "nº" após Lei/Decreto/Portaria (antes de número de documento)
+    def _selecionar_epigrafe(self):
+        """Seleciona epígrafe personalizada baseada no perfil e lotação do servidor."""
+        # Citações organizadas por tema — escolha heurística baseada na lotação
+        citacoes = [
+            # Educação e transformação (default)
+            {
+                'quote': '"A educação não transforma o mundo. Educação muda as pessoas. Pessoas transformam o mundo."',
+                'author': 'Paulo Freire',
+                'tema': 'educação'
+            },
+            # Serviço público e compromisso
+            {
+                'quote': '"Servir ao público é a maior honra que um cidadão pode ter. O serviço público é uma causa que merece toda a dedicação."',
+                'author': 'Paulo Freire',
+                'tema': 'serviço_público'
+            },
+            # Gestão e universidade
+            {
+                'quote': '"A universidade pública, gratuita e de qualidade é um patrimônio do povo brasileiro que deve ser defendida e fortalecida a cada dia."',
+                'author': 'Anísio Teixeira',
+                'tema': 'universidade'
+            },
+            # Conhecimento e saber
+            {
+                'quote': '"O saber construído na prática, quando refletido sistematicamente, produz conhecimento tão válido quanto a mais rigorosa pesquisa acadêmica."',
+                'author': 'Adaptado de Paulo Freire',
+                'tema': 'conhecimento'
+            },
+            # Trajetória e carreira
+            {
+                'quote': '"A carreira de um servidor público se mede não pelo cargo que ocupa, mas pelas transformações que promove na instituição e na vida das pessoas."',
+                'author': 'Anísio Teixeira',
+                'tema': 'carreira'
+            },
+        ]
+        # Heurística: escolhe baseada na lotação
+        lot_lower = self.lotacao.lower() if self.lotacao else ''
+        if 'gestão' in lot_lower or 'pessoas' in lot_lower or 'administrat' in lot_lower:
+            tema_pref = 'serviço_público'
+        elif 'ensino' in lot_lower or 'graduação' in lot_lower or 'pedagóg' in lot_lower or 'educaç' in lot_lower:
+            tema_pref = 'educação'
+        elif 'pesquisa' in lot_lower or 'ciência' in lot_lower or 'tecnologia' in lot_lower:
+            tema_pref = 'conhecimento'
+        elif 'direção' in lot_lower or 'reitor' in lot_lower or 'gabinete' in lot_lower:
+            tema_pref = 'universidade'
+        else:
+            tema_pref = 'carreira'
+        # Fallback para o primeiro (Paulo Freire) se não encontrar
+        for c in citacoes:
+            if c['tema'] == tema_pref:
+                return c['quote'], c['author']
+        return citacoes[0]['quote'], citacoes[0]['author']
+
+    @staticmethod
+    def _normalizar_texto(texto):
+        """Correção de acentos — dicionário + regras de sufixo.
+
+        Combina um dicionário curado com regras de sufixo sistemáticas
+        para restaurar acentos perdidos na extração de PDF.
+        """
+        # === REGRAS SISTEMÁTICAS DE SUFIXO (seguras em português) ===
+        # -cao → -ção (ação, educação)
+        texto = re.sub(r'\b(\w{2,})cao\b',
+                       lambda m: m.group(1) + 'ção', texto, flags=re.IGNORECASE)
+        # -oes → -ões (ações, organizações)
+        texto = re.sub(r'\b(\w{2,})oes\b',
+                       lambda m: m.group(1) + 'ões', texto, flags=re.IGNORECASE)
+        # -aes → -ães (pães, cães)
+        texto = re.sub(r'\b(\w{2,})aes\b',
+                       lambda m: m.group(1) + 'ães', texto, flags=re.IGNORECASE)
+        # -ao final de palavra (exceto artigo/preposição "ao") → -ão
+        texto = re.sub(r'\b(\w{3,})ao\b',
+                       lambda m: m.group(1) + 'ão', texto, flags=re.IGNORECASE)
+        # -vel → acentua vogal anterior (indelével, possível, viável)
+        texto = re.sub(r'\b(\w+)(vel)\b',
+                       lambda m: _acentuar_vogal_anterior(m.group(1)) + m.group(2),
+                       texto, flags=re.IGNORECASE)
+        # "e" → "é" (verbo ser) em contextos seguros
+        texto = re.sub(r'\b(Meu nome) e\b', r'\1 é', texto)
+        texto = re.sub(r'(?<=^)E\b', 'É', texto)
+        texto = re.sub(r'(?<=[.!?] )E\b', 'É', texto)
+        texto = re.sub(r'\bnão e\b', 'não é', texto)
+        texto = re.sub(r'\bnao e\b', 'não é', texto, flags=re.IGNORECASE)
+        # Dicionário de palavras específicas que as regras de sufixo não capturam
+        # (proparoxítonas e outras formas que exigem acento em sílaba não-final)
+        palavra_map = {
+            'ambito': 'âmbito',
+            'epoca': 'época', 'epocas': 'épocas',
+            'periodo': 'período', 'periodos': 'períodos',
+            'genero': 'gênero', 'generos': 'gêneros',
+            'inicio': 'início',
+            'fenomeno': 'fenômeno',
+            'exito': 'êxito',
+            'carater': 'caráter',
+            'matricula': 'matrícula', 'matriculas': 'matrículas',
+            'academico': 'acadêmico', 'academica': 'acadêmica',
+            'academicos': 'acadêmicos', 'academicas': 'acadêmicas',
+            'cientifico': 'científico', 'cientifica': 'científica',
+            'cientificos': 'científicos', 'cientificas': 'científicas',
+            'tecnico': 'técnico', 'tecnica': 'técnica',
+            'tecnicos': 'técnicos', 'tecnicas': 'técnicas',
+            'publico': 'público', 'publica': 'pública',
+            'publicos': 'públicos', 'publicas': 'públicas',
+            'especifico': 'específico', 'especifica': 'específica',
+            'especificos': 'específicos', 'especificas': 'específicas',
+            'proprio': 'próprio', 'propria': 'própria',
+            'proprios': 'próprios', 'proprias': 'próprias',
+            'multiplas': 'múltiplas', 'multiplos': 'múltiplos',
+            'inumeras': 'inúmeras', 'inumeros': 'inúmeros',
+            'economico': 'econômico', 'economica': 'econômica',
+            'economicos': 'econômicos', 'economicas': 'econômicas',
+            'estrategico': 'estratégico', 'estrategica': 'estratégica',
+            'estrategicos': 'estratégicos', 'estrategicas': 'estratégicas',
+            'pedagogico': 'pedagógico', 'pedagogica': 'pedagógica',
+            'pedagogicos': 'pedagógicos', 'pedagogicas': 'pedagógicas',
+            'tecnologico': 'tecnológico', 'tecnologica': 'tecnológica',
+            'tecnologicos': 'tecnológicos', 'tecnologicas': 'tecnológicas',
+            'tres': 'três',
+            'tambem': 'também',
+            'ate': 'até',
+            'ja': 'já',
+            'so': 'só',
+            'voce': 'você',
+        }
+        for sem_acento, com_acento in palavra_map.items():
+            texto = re.sub(r'\b' + re.escape(sem_acento) + r'\b', com_acento, texto, flags=re.IGNORECASE)
+
+        # "n" → "nº" após Lei/Decreto/Portaria
         texto = re.sub(r'\b(Lei|Decreto|Portaria|Resolução|Instrução|Norma|Regulamento)\s+n\s+',
                        r'\1 nº ', texto)
         texto = re.sub(r'\bn\s+(\d[\d.,\s]*(?:/20\d\d|/19\d\d))', r'nº \1', texto)
-        # "e" → "é" (verbo ser) em contextos seguros
-        texto = re.sub(r'\bnão e\b', 'não é', texto)
-        texto = re.sub(r'\bnao e\b', 'não é', texto, flags=re.IGNORECASE)
+        # "sao" → "são"
+        texto = re.sub(r'\bsao\b', 'são', texto, flags=re.IGNORECASE)
+        # "nao" → "não"
+        texto = re.sub(r'\bnao\b', 'não', texto, flags=re.IGNORECASE)
         return texto
+
+    def _normalizar(self, texto):
+        """Wrapper para _normalizar_texto (compatibilidade)."""
+        return self._normalizar_texto(texto)
 
     def generate(self):
         """Gera o memorial completo."""
@@ -946,9 +1127,10 @@ class MemorialGenerator:
                   f"COMPETÊNCIAS -- RSC-PCCTAE NÍVEL {self.nível['nome']}")
         md = []
         # ===== CAPA (UFV-ABNT) =====
-        # Modelo UFV-PPG: UNIVERSIDADE FEDERAL DE VIÇOSA → nome do autor → título → local → ano
+        # Modelo UFV-PPG (skill ufv-abnt): UNIVERSIDADE FEDERAL DE VIÇOSA → nome do autor → título → local → ano
         # Elementos centralizados, negrito, espaçamento vertical para efeito de meia folha
-        md.append("<br><br><br><br><br>\n")
+        # Sem brasão — conforme padrão UFV/ABNT para trabalhos acadêmicos textuais
+        md.append('<br><br><br><br><br>\n')
         md.append('<p align="center"><strong>UNIVERSIDADE FEDERAL DE VIÇOSA</strong></p>\n')
         md.append('<br><br>\n')
         md.append(f'<p align="center"><strong>{self.nome}</strong></p>\n')
@@ -965,9 +1147,9 @@ class MemorialGenerator:
         md.append(f'<p align="center"><strong>{titulo}</strong></p>\n')
         md.append('<div style="text-align:justify; margin-left:4cm; margin-right:0cm; line-height:1.0;">\n')
         md.append(
-            f'Memorial descritivo apresentado a Comissao para Reconhecimento de Saberes '
-            f'e Competencias do Plano de Carreira dos Cargos Tecnico-Administrativos em '
-            f'Educacao (CRSC-PCCTAE) da Universidade Federal de Viçosa como requisito '
+            f'Memorial descritivo apresentado à Comissão para Reconhecimento de Saberes '
+            f'e Competências do Plano de Carreira dos Cargos Técnico-Administrativos em '
+            f'Educação (CRSC-PCCTAE) da Universidade Federal de Viçosa como requisito '
             f'para concessão do RSC-PCCTAE Nível {self.nível["nome"]}, nos termos da Lei '
             f'n 11.091/2005 (alterada pela Lei nº 15.367/2026), do Decreto nº 13.048/2026 '
             f'e da legislação correlata.\n'
@@ -981,45 +1163,57 @@ class MemorialGenerator:
         # ===== DEDICATORIA =====
         md.append('<p align="right" style="font-size:12pt; font-style:italic;">\n')
         md.append('  Aos servidores técnico-administrativos em educação,<br>\n')
-        md.append('  cujo trabalho silencioso constroi a universidade pública<br>\n')
-        md.append('  brasileira dia apos dia.\n')
+        md.append('  cujo trabalho silencioso constrói a universidade pública<br>\n')
+        md.append('  brasileira dia após dia.\n')
         md.append('</p>\n')
         md.append("\n---\n")
 
         # ===== AGRADECIMENTOS =====
         md.append("# AGRADECIMENTOS\n\n")
+        # Determinar unidade de lotação para agradecimentos personalizados
+        unidade_lotacao = self.lotacao if self.lotacao and 'lotado' not in self.lotacao.lower() else self.d.get('funcao', 'minha unidade')
         md.append(
-            f"Expresso minha gratidao a Universidade Federal de Viçosa, instituição que ha "
-            f"{self.anos_carreira} anos e o espaco do meu crescimento profissional e pessoal. "
-            f"Aos colegas da Pro-Reitoria de Gestao de Pessoas, pelo aprendizado cotidiano "
-            f"e pelo trabalho colaborativo que tornou possivel cada conquista aqui registrada.\n\n"
-            f"Agradeco a Comissao para Reconhecimento de Saberes e Competencias do PCCTAE, "
-            f"pelo cuidadoso trabalho de avaliação das trajetorias dos servidores "
-            f"técnico-administrativos.\n\n"
-            f"O presente trabalho foi realizado com apoio da Coordenacao de Aperfeicoamento "
-            f"de Pessoal de Nível Superior -- Brasil (CAPES) -- Codigo de Financiamento 001.\n\n"
-            f"Aos servidores que compartilharam comigo a missao de construir uma universidade "
-            f"pública, gratuita e de qualidade, minha sincera admiraco e reconhecimento.\n"
+            f"Expresso minha gratidão à Universidade Federal de Viçosa, instituição que há "
+            f"{self.anos_carreira} anos é o espaço do meu crescimento profissional e pessoal. "
+            f"Aos colegas da {unidade_lotacao}, pelo aprendizado cotidiano "
+            f"e pelo trabalho colaborativo que tornou possível cada conquista aqui registrada.\n\n"
+            f"Agradeço à Comissão para Reconhecimento de Saberes e Competências do PCCTAE "
+            f"(CRSC-PCCTAE) da UFV, pelo cuidadoso trabalho de avaliação das trajetórias "
+            f"dos servidores técnico-administrativos em educação.\n\n"
+            f"Aos servidores que compartilharam comigo a missão de construir uma universidade "
+            f"pública, gratuita e de qualidade, minha sincera admiração e reconhecimento.\n"
         )
         md.append("\n---\n")
 
         # ===== EPIGRAFE =====
+        ep_quote, ep_author = self._selecionar_epigrafe()
+        # Remove aspas externas e quebra em frases para melhor visualização
+        ep_text = ep_quote.strip('"')
+        # Divide em frases (por . ou ! ou ? seguido de espaço)
+        ep_sentences = re.split(r'(?<=[.!?])\s+', ep_text)
+        ep_sentences = [s.strip() for s in ep_sentences if s.strip()]
         md.append('<p align="right" style="font-size:12pt; font-style:italic;">\n')
-        md.append('  "A educação não transforma o mundo. Educacao muda as pessoas.<br>\n')
-        md.append('  Pessoas transformam o mundo."<br>\n')
-        md.append('  <span style="font-size:11pt;">-- Paulo Freire</span>\n')
+        if len(ep_sentences) == 1:
+            # Frase única: abre e fecha aspas na mesma linha
+            md.append(f'  "{ep_sentences[0]}"<br>\n')
+        else:
+            # Múltiplas frases: abre aspas na primeira, fecha na última
+            md.append(f'  "{ep_sentences[0]}<br>\n')
+            for s in ep_sentences[1:-1]:
+                md.append(f'  {s}<br>\n')
+            md.append(f'  {ep_sentences[-1]}"<br>\n')
+        md.append(f'  <span style="font-size:11pt;">-- {ep_author}</span>\n')
         md.append('</p>\n')
         md.append("\n---\n")
 
         # ===== LISTA DE SIGLAS =====
         md.append("# LISTA DE SIGLAS\n\n")
         siglas = [
-            "**CAPES** -- Coordenacao de Aperfeicoamento de Pessoal de Nível Superior",
-            "**CRSC-PCCTAE** -- Comissao para Reconhecimento de Saberes e Competencias do "
-            "Plano de Carreira dos Cargos Tecnico-Administrativos em Educacao",
-            "**PCCTAE** -- Plano de Carreira dos Cargos Tecnico-Administrativos em Educacao",
-            "**RSC** -- Reconhecimento de Saberes e Competencias",
-            "**SIAPE** -- Sistema Integrado de Administracao de Recursos Humanos",
+            "**CRSC-PCCTAE** -- Comissão para Reconhecimento de Saberes e Competências do "
+            "Plano de Carreira dos Cargos Técnico-Administrativos em Educação",
+            "**PCCTAE** -- Plano de Carreira dos Cargos Técnico-Administrativos em Educação",
+            "**RSC** -- Reconhecimento de Saberes e Competências",
+            "**SIAPE** -- Sistema Integrado de Administração de Recursos Humanos",
             "**UFV** -- Universidade Federal de Viçosa",
         ]
         md.extend([f"{s}\n\n" for s in siglas])
@@ -1027,16 +1221,16 @@ class MemorialGenerator:
 
         # ===== SUMÁRIO =====
         md.append("# SUMÁRIO\n\n")
-        md.append("- **1 INTRODUÇÃO -- TRAJETORIA E FUNDAMENTOS**\n")
+        md.append("- **1 INTRODUÇÃO -- TRAJETÓRIA E FUNDAMENTOS**\n")
         md.append("- **2 ANEXO I -- PARTICIPAÇÃO EM COMISSÕES, GRUPOS DE TRABALHO E CONCURSOS**\n")
         md.append("- **3 ANEXO II -- PARTICIPAÇÃO EM PROJETOS INSTITUCIONAIS**\n")
-        md.append("- **4 ANEXO III -- PREMAÇÕES**\n")
+        md.append("- **4 ANEXO III -- PREMIAÇÕES**\n")
         md.append("- **5 ANEXO IV -- RESPONSABILIDADES TÉCNICO-ADMINISTRATIVAS**\n")
-        md.append("- **6 ANEXO V -- EXERCICIO DE FUNÇÕES DE DIRECAO E ASSESSORAMENTO**\n")
+        md.append("- **6 ANEXO V -- EXERCÍCIO DE FUNÇÕES DE DIREÇÃO E ASSESSORAMENTO**\n")
         md.append("- **7 ANEXO VI -- PRODUÇÃO, PROSPECÇÃO E DIFUSÃO DE CONHECIMENTO CIENTÍFICO E TÉCNICO**\n")
         md.append("- **8 SÍNTESE DE PONTUAÇÃO**\n")
         md.append("- **9 REFLEXÃO FINAL -- SABERES E COMPETÊNCIAS**\n")
-        md.append("- **REFERENCIAS**\n")
+        md.append("- **REFERÊNCIAS**\n")
         md.append("\n---\n")
 
         # ===== CONTEUDO =====
@@ -1061,9 +1255,9 @@ class MemorialGenerator:
         md.extend(self._referencias())
         md.append("\n---\n")
         md.append(
-            "*Memorial gerado automaticamente em conformidade com a Secao 2.3.7 das "
+            "*Memorial gerado automaticamente em conformidade com a Seção 2.3.7 das "
             "Diretrizes do Agente (OBRIGATORIEDADE de salvamento proativo no vault). "
-            "Dados extraidos do Relatorio Detalhado RSC emitido pelo sistema UFV "
+            "Dados extraídos do Relatório Detalhado RSC emitido pelo sistema UFV "
             f"em {datetime.now().strftime('%d/%m/%Y')}.*\n"
         )
         texto_final = ''.join(md)
@@ -1229,7 +1423,7 @@ def _html_to_docx(doc, lines):
 
 
 def md_to_docx_ufv(md_path, docx_path):
-    """Converte MD para DOCX com formatacao UFV/ABNT obrigatoria.
+    """Converte MD para DOCX com formatação UFV/ABNT obrigatória.
     
     Processa HTML blocks (capa, folha de rosto, dedicatória, epígrafe)
     em vez de ignorá-los.
@@ -1336,7 +1530,10 @@ def md_to_docx_ufv(md_path, docx_path):
                         cell = table.rows[r_idx].cells[c_idx]
                         cell.text = ''
                         p = cell.paragraphs[0]
-                        run = p.add_run(cell_text.strip('-').strip())
+                        # Strip residual markdown markers (**bold**, *italic*, dashes)
+                        clean_text = cell_text.strip('-').strip()
+                        clean_text = clean_text.replace('**', '').replace('*', '')
+                        run = p.add_run(clean_text)
                         run.font.size = Pt(10)
                         if is_header:
                             run.bold = True
@@ -1350,8 +1547,26 @@ def md_to_docx_ufv(md_path, docx_path):
             p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
             p.paragraph_format.line_spacing = 1.5
             p.paragraph_format.left_indent = Cm(1)
-            run = p.add_run(stripped)
-            run.font.size = Pt(12)
+            # Process markdown within list items
+            list_text = stripped
+            parts = re.split(r'(\*\*.*?\*\*)', list_text)
+            for part in parts:
+                if part.startswith('**') and part.endswith('**'):
+                    run = p.add_run(part[2:-2])
+                    run.bold = True
+                    run.font.size = Pt(12)
+                elif part:
+                    subparts = re.split(r'(\*.*?\*)', part)
+                    for sub in subparts:
+                        if sub.startswith('*') and sub.endswith('*') and len(sub) > 2:
+                            run = p.add_run(sub[1:-1])
+                            run.italic = True
+                            run.font.size = Pt(12)
+                        elif sub:
+                            clean = sub.replace('**', '').replace('*', '')
+                            if clean:
+                                run = p.add_run(clean)
+                                run.font.size = Pt(12)
 
         elif stripped == '':
             pass
@@ -1360,7 +1575,8 @@ def md_to_docx_ufv(md_path, docx_path):
             p = doc.add_paragraph()
             p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
             p.paragraph_format.line_spacing = 1.5
-            # Process bold markers
+            # Process bold (**) and italic (*) markers
+            # Step 1: split by **bold** first (greedy)
             parts = re.split(r'(\*\*.*?\*\*)', stripped)
             for part in parts:
                 if part.startswith('**') and part.endswith('**'):
@@ -1368,8 +1584,19 @@ def md_to_docx_ufv(md_path, docx_path):
                     run.bold = True
                     run.font.size = Pt(12)
                 elif part:
-                    run = p.add_run(part)
-                    run.font.size = Pt(12)
+                    # Step 2: within non-bold segments, process *italic*
+                    subparts = re.split(r'(\*.*?\*)', part)
+                    for sub in subparts:
+                        if sub.startswith('*') and sub.endswith('*') and len(sub) > 2:
+                            run = p.add_run(sub[1:-1])
+                            run.italic = True
+                            run.font.size = Pt(12)
+                        elif sub:
+                            # Remove any residual stray * or markers
+                            clean = sub.replace('**', '').replace('*', '')
+                            if clean:
+                                run = p.add_run(clean)
+                                run.font.size = Pt(12)
 
         i += 1
 
@@ -1404,21 +1631,222 @@ def md_to_docx_ufv(md_path, docx_path):
 
 
 # =============================================================================
-# CONVERSÃO PDF
+# CONVERSÃO PDF (desativada — use o .docx para gerar PDF pelo Word/LibreOffice)
 # =============================================================================
-def md_to_pdf(md_path, pdf_path):
-    import subprocess
-    md_abs = os.path.abspath(md_path)
-    pdf_abs = os.path.abspath(pdf_path)
-    result = subprocess.run(
-        ['pandoc', md_abs, '-o', pdf_abs,
-         '--pdf-engine=weasyprint',
-         '--metadata', 'title="Memorial RSC-PCCTAE"',
-         '--metadata', 'author="Gerado pelo PesquisAI (pdf-to-memorial-rsc)"'],
-        capture_output=True, text=True
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"pandoc + weasyprint failed: {result.stderr}")
+# def md_to_pdf(md_path, pdf_path):
+#     import subprocess
+#     md_abs = os.path.abspath(md_path)
+#     pdf_abs = os.path.abspath(pdf_path)
+#     result = subprocess.run(
+#         ['pandoc', md_abs, '-o', pdf_abs,
+#          '--pdf-engine=weasyprint',
+#          '--metadata', 'title="Memorial RSC-PCCTAE"',
+#          '--metadata', 'author="Gerado pelo PesquisAI (pdf-to-memorial-rsc)"'],
+#         capture_output=True, text=True
+#     )
+#     if result.returncode != 0:
+#         raise RuntimeError(f"pandoc + weasyprint failed: {result.stderr}")
+
+
+# =============================================================================
+# DADOS DE EXEMPLO (anônimos)
+# =============================================================================
+
+def build_example_data():
+    """Constrói dicionário de dados completo com placeholders anônimos
+    para geração de memorial de exemplo.
+    
+    Todos os dados são fictícios — nenhum servidor real é identificado.
+    """
+    grupos_exemplo = [
+        {
+            'romano': 'I', 'nome': 'Participação em Grupos de Trabalho, Comissões, '
+                       'Comitês, Núcleos e Representações',
+            'nome_curto': 'Comissões', 'criterios': 2, 'pontos': 25.0
+        },
+        {
+            'romano': 'II', 'nome': 'Participação e Atuação em Projetos Institucionais',
+            'nome_curto': 'Projetos', 'criterios': 1, 'pontos': 15.0
+        },
+        {
+            'romano': 'III', 'nome': 'Recebimento de Premiação',
+            'nome_curto': 'Premiações', 'criterios': 1, 'pontos': 5.0
+        },
+        {
+            'romano': 'IV', 'nome': 'Designação para Assunção de Responsabilidades '
+                       'Técnico-Administrativas ou Especializadas',
+            'nome_curto': 'Responsabilidades', 'criterios': 2, 'pontos': 20.0
+        },
+        {
+            'romano': 'V', 'nome': 'Exercício de Função ou Cargo de Direção ou de '
+                       'Assessoramento Institucional',
+            'nome_curto': 'Direção', 'criterios': 3, 'pontos': 25.0
+        },
+        {
+            'romano': 'VI', 'nome': 'Produção, Prospecção e Difusão de Conhecimento '
+                       'Científico ou Técnico',
+            'nome_curto': 'Produção', 'criterios': 2, 'pontos': 20.0
+        },
+    ]
+
+    criterios_exemplo = {
+        'I-01': {
+            'key': 'I-01', 'romano': 'I', 'numero': '01', 'ordem': 0,
+            'descricao': (
+                'Exercício do mandato como membro de conselhos superiores e '
+                'colegiados — designação formal como representante em conselho '
+                'de administração de unidade universitária.'
+            ),
+            'itens': [
+                {'num': '1', 'texto': 'Portaria de designação (2020-2022)'},
+                {'num': '2', 'texto': 'Atas de reunião com participação registrada'},
+            ],
+            'pontos': 15.0
+        },
+        'I-02': {
+            'key': 'I-02', 'romano': 'I', 'numero': '02', 'ordem': 1,
+            'descricao': (
+                'Participação em comissões e grupos de trabalho institucionais '
+                '— composição de comissão para revisão de normas acadêmicas.'
+            ),
+            'itens': [
+                {'num': '1', 'texto': 'Portaria de nomeação da comissão'},
+                {'num': '2', 'texto': 'Relatório final dos trabalhos'},
+            ],
+            'pontos': 10.0
+        },
+        'II-02': {
+            'key': 'II-02', 'romano': 'II', 'numero': '02', 'ordem': 2,
+            'descricao': (
+                'Atuação em projeto institucional de modernização administrativa '
+                '— implantação de sistema eletrônico de gestão.'
+            ),
+            'itens': [
+                {'num': '1', 'texto': 'Termo de adesão ao projeto'},
+                {'num': '2', 'texto': 'Relatório de atividades realizadas'},
+                {'num': '3', 'texto': 'Certificado de participação'},
+            ],
+            'pontos': 15.0
+        },
+        'III-01': {
+            'key': 'III-01', 'romano': 'III', 'numero': '01', 'ordem': 3,
+            'descricao': (
+                'Recebimento de premiação por desempenho institucional '
+                '— reconhecimento por contribuição à gestão universitária.'
+            ),
+            'itens': [
+                {'num': '1', 'texto': 'Certificado de premiação'},
+            ],
+            'pontos': 5.0
+        },
+        'IV-01': {
+            'key': 'IV-01', 'romano': 'IV', 'numero': '01', 'ordem': 4,
+            'descricao': (
+                'Designação para responsabilidade técnico-administrativa '
+                '— coordenação de setor estratégico na unidade de lotação.'
+            ),
+            'itens': [
+                {'num': '1', 'texto': 'Portaria de designação'},
+                {'num': '2', 'texto': 'Relatório anual de atividades'},
+            ],
+            'pontos': 12.0
+        },
+        'IV-07': {
+            'key': 'IV-07', 'romano': 'IV', 'numero': '07', 'ordem': 5,
+            'descricao': (
+                'Atuação como fiscal de contrato ou convênio — '
+                'acompanhamento e gestão de contratos administrativos.'
+            ),
+            'itens': [
+                {'num': '1', 'texto': 'Nomeação como fiscal de contrato'},
+                {'num': '2', 'texto': 'Relatórios de fiscalição'},
+            ],
+            'pontos': 8.0
+        },
+        'V-01': {
+            'key': 'V-01', 'romano': 'V', 'numero': '01', 'ordem': 6,
+            'descricao': (
+                'Exercício de função de direção (CD) — '
+                'ocupação de cargo de direção de nível CD-03 ou superior.'
+            ),
+            'itens': [
+                {'num': '1', 'texto': 'Ato de nomeação'},
+                {'num': '2', 'texto': 'Relatório de atividades do período'},
+            ],
+            'pontos': 12.0
+        },
+        'V-02': {
+            'key': 'V-02', 'romano': 'V', 'numero': '02', 'ordem': 7,
+            'descricao': (
+                'Exercício de função de assessoramento (CD) — '
+                'assessoramento direto à autoridade superior.'
+            ),
+            'itens': [
+                {'num': '1', 'texto': 'Ato de nomeação'},
+                {'num': '2', 'texto': 'Relatório de assessoramento'},
+            ],
+            'pontos': 8.0
+        },
+        'V-03': {
+            'key': 'V-03', 'romano': 'V', 'numero': '03', 'ordem': 8,
+            'descricao': (
+                'Exercício de função gratificada (FG) — '
+                'chefia de setor ou divisão com FG-02 ou superior.'
+            ),
+            'itens': [
+                {'num': '1', 'texto': 'Portaria de designação'},
+                {'num': '2', 'texto': 'Relatório de atividades'},
+            ],
+            'pontos': 5.0
+        },
+        'VI-09': {
+            'key': 'VI-09', 'romano': 'VI', 'numero': '09', 'ordem': 9,
+            'descricao': (
+                'Publicação de livro com ISBN — '
+                'obra publicada por editora universitária.'
+            ),
+            'itens': [
+                {'num': '1', 'texto': 'ISBN do livro'},
+                {'num': '2', 'texto': 'Ficha catalográfica'},
+            ],
+            'pontos': 12.0
+        },
+        'VI-10': {
+            'key': 'VI-10', 'romano': 'VI', 'numero': '10', 'ordem': 10,
+            'descricao': (
+                'Publicação de artigo em peri�dico ou anais — '
+                'artigo completo publicado em evento científico.'
+            ),
+            'itens': [
+                {'num': '1', 'texto': 'Capa dos anais'},
+                {'num': '2', 'texto': 'Comprovante de publicação'},
+            ],
+            'pontos': 8.0
+        },
+    }
+    ordem_criterios = ['I-01', 'I-02', 'II-02', 'III-01',
+                       'IV-01', 'IV-07', 'V-01', 'V-02', 'V-03',
+                       'VI-09', 'VI-10']
+
+    return {
+        'nome': 'NOME DO(A) SERVIDOR(A)',
+        'matricula': '0000000',
+        'cargo': 'CARGO EFETIVO',
+        'titulação': 'MESTRADO EM ADMINISTRAÇÃO',
+        'rsc_requerido': 'RSC VI - Equivalente a Doutorado',
+        'rsc_nivel': 'VI',
+        'data_admissao': '07/01/2009',
+        'lotacao': 'UNIDADE DE LOTAÇÃO',
+        'funcao': 'ASSESSORIA ESPECIAL',
+        'nivel_classe': 'E',
+        'equivalente': 'Doutorado',
+        'total_geral': 110.0,
+        'total_criterios': 11,
+        'grupos': grupos_exemplo,
+        'criterios': criterios_exemplo,
+        'ordem_criterios': ordem_criterios,
+        'nivel_info': NIVEL_EQUIVALENCIA['VI'],
+    }
 
 
 # =============================================================================
@@ -1426,61 +1854,83 @@ def md_to_pdf(md_path, pdf_path):
 # =============================================================================
 def main():
     parser = argparse.ArgumentParser(
-        description='Gera memorial RSC-PCCTAE completo a partir do PDF de relatorio detalhado.')
-    parser.add_argument('pdf', help='Caminho para o PDF do Relatorio Detalhado RSC')
+        description='Gera memorial RSC-PCCTAE completo a partir do PDF de relatório detalhado.')
+    parser.add_argument('pdf', nargs='?', default=None,
+                        help='Caminho para o PDF do Relatório Detalhado RSC')
     parser.add_argument('--output-dir', '-o', default=None)
     parser.add_argument('--nome', '-n', default=None)
     parser.add_argument('--ano-ingresso', '-a', type=int, default=None)
     parser.add_argument('--auto', action='store_true',
-                        help='Modo automatico: usa 2009 como ano de ingresso se não informado')
+                        help='Modo automático: usa 2009 como ano de ingresso se não informado')
+    parser.add_argument('--example', action='store_true',
+                        help=('Gera memorial de exemplo com dados anônimos '
+                              '(placeholders) — não requer PDF de entrada'))
     args = parser.parse_args()
 
-    pdf_path = Path(args.pdf)
-    if not pdf_path.exists():
-        sys.exit(f"Arquivo não encontrado: {pdf_path}")
+    if args.example:
+        output_dir = Path(args.output_dir) if args.output_dir else (
+            Path(__file__).parent / 'examples')
+        output_dir.mkdir(parents=True, exist_ok=True)
+        stem = 'memorial_rsc_example'
+        data = build_example_data()
+        print("=" * 60)
+        print("GERADOR DE MEMORIAL RSC-PCCTAE v3.3 — MODO EXEMPLO")
+        print("=" * 60)
+        print("   Gerando memorial de exemplo com dados anônimos")
+        print("=" * 60)
+        nome = 'NOME DO(A) SERVIDOR(A)'
+        ano_ingresso = args.ano_ingresso or 2009
+    else:
+        if not args.pdf:
+            sys.exit("Erro: informe o caminho do PDF ou use --example para gerar exemplo.")
+        pdf_path = Path(args.pdf)
+        if not pdf_path.exists():
+            sys.exit(f"Arquivo não encontrado: {pdf_path}")
+        output_dir = Path(args.output_dir) if args.output_dir else pdf_path.parent
+        output_dir.mkdir(parents=True, exist_ok=True)
+        stem = pdf_path.stem.replace(' ', '_')
 
-    output_dir = Path(args.output_dir) if args.output_dir else pdf_path.parent
-    output_dir.mkdir(parents=True, exist_ok=True)
-    stem = pdf_path.stem.replace(' ', '_')
+        print("=" * 60)
+        print("GERADOR DE MEMORIAL RSC-PCCTAE v3.3")
+        print("=" * 60)
+        print(f"   Decreto nº 13.048/2026: {DECRETO_URL}")
+        print("=" * 60)
 
-    print("=" * 60)
-    print("GERADOR DE MEMORIAL RSC-PCCTAE v3.1")
-    print("=" * 60)
-    print(f"   Decreto nº 13.048/2026: {DECRETO_URL}")
-    print("=" * 60)
+        print(f"\nLendo PDF: {pdf_path}")
+        parser_obj = RSCPDFParser(str(pdf_path))
+        data = parser_obj.data
 
-    print(f"\nLendo PDF: {pdf_path}")
-    parser_obj = RSCPDFParser(str(pdf_path))
-    data = parser_obj.data
+        if args.nome:
+            data['nome'] = args.nome
+        nome = data['nome']
 
-    if args.nome:
-        data['nome'] = args.nome
-    nome = data['nome']
+        # Ano de ingresso — extraído automaticamente da data de admissão
+        ano_ingresso = args.ano_ingresso
+        if ano_ingresso is None:
+            try:
+                ano_ingresso = int(data['data_admissao'].split('/')[-1])
+            except (ValueError, IndexError, AttributeError):
+                if args.auto:
+                    ano_ingresso = 2009
+                else:
+                    ano_ingresso = perguntar_ano_ingresso()
 
-    # Ano de ingresso
-    ano_ingresso = args.ano_ingresso
-    if ano_ingresso is None:
-        if args.auto:
-            ano_ingresso = 2009
-        else:
-            ano_ingresso = perguntar_ano_ingresso()
+        print(f"\n   Servidor: {nome}")
+        print(f"   Matrícula: {data['matricula']}")
+        print(f"   Cargo: {data['cargo']}")
+        print(f"   Titulação: {data['titulação']}")
+        print(f"   RSC Requerido: {data['rsc_requerido']}")
+        print(f"   Nível: {data['nivel_info']['nome']} (equivalente a {data['nivel_info']['equivalente']})")
+        print(f"   Total: {fmt_br(data['total_geral'])} pts ({data['total_criterios']} critérios)")
+        print(f"   Grupos: {len(data['grupos'])}")
+        print(f"   Critérios extraídos: {len(data['criterios'])}")
+        print(f"   Ordem critérios: {len(data['ordem_criterios'])}")
+        for g in data['grupos']:
+            print(f"      {g['romano']}: {g['nome_curto']} -- {g['criterios']} crit, {fmt_br(g['pontos'])} pts")
+        anos_carreira = datetime.now().year - ano_ingresso
+        print(f"\n   Ano de ingresso na UFV: {ano_ingresso} ({anos_carreira} anos de carreira)")
 
-    print(f"\n   Servidor: {nome}")
-    print(f"   Matricula: {data['matricula']}")
-    print(f"   Cargo: {data['cargo']}")
-    print(f"   Titulação: {data['titulação']}")
-    print(f"   RSC Requerido: {data['rsc_requerido']}")
-    print(f"   Nível: {data['nivel_info']['nome']} (equivalente a {data['nivel_info']['equivalente']})")
-    print(f"   Total: {fmt_br(data['total_geral'])} pts ({data['total_criterios']} critérios)")
-    print(f"   Grupos: {len(data['grupos'])}")
-    print(f"   Critérios extraídos: {len(data['criterios'])}")
-    print(f"   Ordem critérios: {len(data['ordem_criterios'])}")
-    for g in data['grupos']:
-        print(f"      {g['romano']}: {g['nome_curto']} -- {g['criterios']} crit, {fmt_br(g['pontos'])} pts")
-    anos_carreira = datetime.now().year - ano_ingresso
-    print(f"\n   Ano de ingresso na UFV: {ano_ingresso} ({anos_carreira} anos de carreira)")
-
-    # Generate .md
+    # ===== Código comum: geração do MD e DOCX =====
     print(f"\nGerando memorial em Markdown...")
     gen = MemorialGenerator(data, ano_ingresso)
     md_content = gen.generate()
@@ -1499,29 +1949,16 @@ def main():
     except Exception as e:
         print(f"   Aviso: erro ao gerar .docx: {e}")
 
-    # Generate .pdf
-    print(f"Gerando PDF...")
-    pdf_output = output_dir / f"{stem}_MEMORIAL.pdf"
-    try:
-        md_to_pdf(str(md_path), str(pdf_output))
-        sz = os.path.getsize(pdf_output) / 1024
-        print(f"   OK: {pdf_output} ({sz:.1f} KB)")
-    except Exception as e:
-        print(f"   Aviso: erro ao gerar PDF: {e}")
-
     print(f"\n" + "=" * 60)
     print(f"Memorial gerado com sucesso!")
-    print(f"Estrutura e topicos conforme memorial de referencia aprovado.")
-    print(f"Formatacao UFV/ABNT obrigatoria aplicada.")
+    print(f"Estrutura e tópicos conforme memorial de referência aprovado.")
+    print(f"Formatação UFV/ABNT obrigatória aplicada.")
     print(f"Base legal: Decreto nº 13.048/2026 (Art. 13)")
     print(f"Link: {DECRETO_URL}")
     print("=" * 60)
     print(f"MD:  {md_path}")
     if os.path.exists(docx_path):
         print(f"DOCX: {docx_path}")
-    pdf_out = output_dir / f"{stem}_MEMORIAL.pdf"
-    if os.path.exists(pdf_out):
-        print(f"PDF: {pdf_out}")
     print("=" * 60)
 
 
