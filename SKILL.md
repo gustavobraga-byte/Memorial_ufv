@@ -3,129 +3,233 @@ name: pdf-to-memorial-rsc
 description: >
   Gera o memorial RSC-PCCTAE completo (formatado UFV/ABNT OBRIGATÓRIO) a partir do PDF do
   Relatório Detalhado RSC emitido pelo sistema oficial da UFV. Lê o PDF, extrai dados
-  estruturados (nome, matrícula, lotação, data de admissão, pontuação por grupo, TODOS os
-  17 critérios com itens detalhados, nível RSC pleiteado), detecta automaticamente o ano de
-  ingresso na UFV pela data de admissão, detecta automaticamente se a equivalência é com
-  Mestrado ou Doutorado, e produz autonomamente os arquivos .md (fonte de verdade) e .docx
-   (formatado UFV/ABNT). v3.3: --example gera memorial de exemplo com dados anônimos
-   (placeholders) — exemplos .pdf/.docx removidos do pacote; run.py --example é a fonte
-   única dos exemplos. v3.2: ano de ingresso automático, lotação na narrativa, epígrafe e
-   agradecimentos personalizados, geração PDF removida do fluxo principal.
-   v3.1: ESTRUTURA E TÓPICOS IDÊNTICOS ao memorial de referência aprovado pela CRSC-PCCTAE,
-  incluindo as seções "A essência do meu fazer profissional" (3 dimensões), "Fundamentos
-  legais" (requisitos do Nível VI), narrativa por critério com texto fluido em cada anexo,
-  "Verificação dos requisitos legais" (8.2), "Reflexão Final" com subseções (9.1-9.3),
-  e formatação UFV/ABNT obrigatória (Arial 12pt, margens 3cm/2cm, espaçamento 1.5,
-  paginação, capa/folha de rosto/dedicatória/epígrafe conforme manual UFV).
+  estruturados, e permite que o agente PesquisAI (LLM) gere NARRATIVAS LONGAS em linguagem
+  CIENTÍFICA — como o memorial de um professor titular. O run.py então formata e coloca
+  nos tópicos pré-estabelecidos, gerando .md e .docx (formatado UFV/ABNT).
+  v5.0: FLUXO LLM NATIVO — o agente gera textos ricos em linguagem acadêmico-científica
+  para cada seção, e o run.py integra esses textos na estrutura do memorial.
   Use SEMPRE que o usuário fornecer um PDF de relatório RSC da UFV e pedir para gerar o
   memorial — ex.: "gere o memorial a partir deste PDF", "pdf para memorial", "RSC Detalhado",
   "relatório RSC", ou ao mencionar o arquivo "RSC Detalhado_*.pdf".
 ---
 
-# PDF → Memorial RSC-PCCTAE — Gerador Autônomo v3.2
+# PDF → Memorial RSC-PCCTAE — Gerador Autônomo v5.0 (NARRATIVAS LLM)
+
+> **Gere textos LONGOS, em LINGUAGEM CIENTÍFICA, como o memorial de um professor titular.**
+> O `run.py` depois formata e coloca nos tópicos pré-estabelecidos.
 
 Gera o memorial completo de Reconhecimento de Saberes e Competências (RSC-PCCTAE)
-autonomamente a partir do PDF oficial do Relatório Detalhado RSC emitido pelo sistema
-da UFV (Pró-Reitoria de Gestão de Pessoas), em conformidade com o **Decreto nº 13.048,
-de 3 de julho de 2026** (Art. 13).
-
-v3.2: ano de ingresso extraído automaticamente da data de admissão; lotação incluída
-na narrativa; epígrafe e agradecimentos personalizados dinâmicos; geração PDF removida
-do fluxo principal (use o .docx para gerar PDF no Word/LibreOffice).
+em conformidade com o **Decreto nº 13.048, de 3 de julho de 2026** (Art. 13).
 
 > **Decreto nº 13.048/2026:** [https://www.planalto.gov.br/ccivil_03/_ato2023-2026/2026/decreto/d13048.htm](https://www.planalto.gov.br/ccivil_03/_ato2023-2026/2026/decreto/d13048.htm)
 
-## Novidades da v3.2
+---
+
+## 🧠 O PROBLEMA (v4.0)
+
+O gerador antigo usava **textos genéricos e hardcoded** no `run.py`:
+
+```python
+# Exemplo do que era gerado (genérico):
+"Ao longo da carreira, participei ativamente de comissões e grupos de trabalho..."
+"Este critério refere-se a: atividades de comissão. Foram registrados N itens..."
+```
+
+Isso resultava em narrativas curtas, repetitivas e sem profundidade —
+**muito aquém do que se espera de um memorial de professor titular.**
+
+---
+
+## ✅ A SOLUÇÃO (v5.0)
+
+**Arquitetura em 3 etapas:**
+
+```
+[PDF]                  Dados extraídos           Narrativas do LLM
+  │                           │                         │
+  ▼                           ▼                         ▼
+┌─────────┐    --dump-json   ┌──────────┐              ┌─────────────┐
+│ run.py  │ ───────────────> │ dados.json│  (passo 1)  │  AGENTE LLM  │
+│ parser  │                  └──────────┘              │ (PesquisAI)  │
+└─────────┘                                            └──────┬──────┘
+       │                                                       │
+       │                                              Gera narrativas
+       │                                              longas/científicas
+       │                                                       │
+       │                                                       ▼
+       │                                              ┌──────────────┐
+       │                                              │narrativas.json│
+       │                                              └──────┬───────┘
+       │                                                     │
+       │   --narrativas narrativas.json                      │
+       └─────────────────────────────────────────────────────┘
+                              │
+                              ▼
+                      ┌─────────────┐
+                      │  run.py     │  Formata + insere nos
+                      │  formatador │  tópicos pré-estabelecidos
+                      └──────┬──────┘
+                             │
+                    ┌────────┴────────┐
+                    ▼                 ▼
+               *_MEMORIAL.md    *_MEMORIAL.docx
+```
+
+### Passo a passo para o agente PesquisAI:
+
+---
+
+## PASSO 1: Extrair dados do PDF
+
+```bash
+python3 run.py "RSC Detalhado_*.pdf" --dump-json dados_extraidos.json
+```
+
+Isso gera um `dados_extraidos.json` com todos os campos extraídos do PDF:
+- nome, matrícula, cargo, titulação, lotação
+- ano de ingresso, anos de carreira
+- grupos I-VI com pontuação
+- TODOS os critérios (I-01 a VI-17) com descrição, itens e pontos
+
+---
+
+## PASSO 2: Gerar narrativas com o LLM (VOCÊ, PesquisAI)
+
+A partir do `dados_extraidos.json`, você deve gerar um arquivo `narrativas.json`
+com textos LONGOS e em LINGUAGEM CIENTÍFICA para cada seção.
+
+### 📋 INSTRUÇÕES PARA GERAÇÃO DE NARRATIVAS:
+
+**REGRAS DE ESTILO — MEMORIAL DE PROFESSOR TITULAR:**
+
+1. **Tom:** Solene, acadêmico, em primeira pessoa ("participei", "contribuí", "construí")
+2. **Extensão:** Cada texto deve ter entre **200 e 600 palavras** por seção
+3. **Linguagem:** Científica, formal, com vocabulário técnico da área de gestão universitária
+4. **Estrutura:** Use parágrafos completos e coesos — NUNCA bullet points ou listas
+5. **Profundidade:** Conecte as atividades pontuadas com o desenvolvimento institucional da UFV
+6. **Contexto:** Cada narrativa deve explicar o significado da atividade, o contexto, os resultados e o aprendizado — não apenas descrever
+7. **Evite:** Clareza excessiva ("participei de uma comissão"). Prefira: "Minha atuação no âmbito dos conselhos superiores permitiu-me contribuir para a formulação de políticas institucionais que impactaram diretamente o desenvolvimento acadêmico e administrativo da UFV, especialmente no que tange à..."
+8. **Dados:** Incorpore os números do relatório (pontos, itens, anos) naturalmente no texto — não apenas liste
+
+### ESTRUTURA DO JSON DE SAÍDA:
+
+```json
+{
+  "introducao_quem_sou": "Texto completo da seção 1.1 (300-500 palavras)...",
+  "introducao_essencia": "Texto completo da seção 1.2 (300-500 palavras)...",
+  "introducao_dimensoes": [
+    "**Dimensão XXX:** descrição detalhada...",
+    "**Dimensão YYY:** descrição detalhada...",
+    "**Dimensão ZZZ:** descrição detalhada..."
+  ],
+  "introducao_fundamentos": "Texto da seção 1.3 (200-300 palavras)...",
+
+  "anexo_I_intro": "Texto introdutório do Anexo I (300-500 palavras)...",
+  "anexo_I_criterios": {
+    "I-01": "Texto detalhado para I-1: Conselhos superiores (200-400 palavras)...",
+    "I-02": "Texto detalhado para I-2: Coordenação/presidência (200-400 palavras)...",
+    "I-03": "Texto detalhado para I-3: Membro de comissões (200-400 palavras)...",
+    "I-05": "Texto detalhado para I-5: Vestibulares/concursos (200-400 palavras)...",
+    "I-06": "Texto detalhado para I-6: Elaboração de provas (200-400 palavras)..."
+  },
+
+  "anexo_II_intro": "Texto introdutório do Anexo II (200-400 palavras)...",
+  "anexo_II_criterios": {
+    "II-01": "Texto detalhado...",
+    "II-02": "Texto detalhado..."
+  },
+
+  "anexo_III": "Texto completo do Anexo III (200-400 palavras)...",
+
+  "anexo_IV_intro": "Texto introdutório do Anexo IV (200-400 palavras)...",
+  "anexo_IV_criterios": {
+    "IV-01": "Texto detalhado...",
+    "IV-07": "Texto detalhado..."
+  },
+
+  "anexo_V_intro": "Texto introdutório do Anexo V (300-500 palavras)...",
+  "anexo_V_criterios": {
+    "V-01": "Texto detalhado...",
+    "V-02": "Texto detalhado...",
+    "V-03": "Texto detalhado..."
+  },
+
+  "anexo_VI_intro": "Texto introdutório do Anexo VI (300-500 palavras)...",
+  "anexo_VI_criterios": {
+    "VI-09": "Texto detalhado para livros publicados...",
+    "VI-10": "Texto detalhado para artigos publicados...",
+    "VI-15": "Texto detalhado para atuação como instrutor...",
+    "VI-16": "Texto detalhado para coordenação de eventos..."
+  },
+
+  "reflexao_saberes": "Texto completo 9.1 (300-500 palavras)...",
+  "reflexao_contribuicao": "Texto completo 9.2 (200-400 palavras)...",
+  "reflexao_pedido": "Texto completo 9.3 (150-300 palavras)..."
+}
+```
+
+**IMPORTANTE:** Inclua APENAS as chaves dos critérios que realmente existem nos dados extraídos. Critérios sem pontuação podem ser omitidos.
+
+### EXEMPLO DE NARRATIVA BEM ESCRITA (para referência):
+
+> **introducao_quem_sou** (deve soar assim — longo, científico, solene):
+>
+> "Meu nome é [NOME], matrícula SIAPE [MATRÍCULA], servidor público federal ocupante do cargo de [CARGO] na Universidade Federal de Viçosa (UFV), instituição à qual dedico minha trajetória profissional desde [ANO_INGRESSO]. Ao longo de [N] anos de serviço público federal, construí uma carreira pautada pelo compromisso inabalável com a excelência da gestão universitária, pela formulação e implementação de políticas institucionais que transcendem o desempenho ordinário das atribuições do cargo e se inserem no âmbito estratégico da administração pública do ensino superior. O presente memorial, elaborado em conformidade com o Art. 13 do Decreto nº 13.048/2026 e com as diretrizes estabelecidas pela Comissão para Reconhecimento de Saberes e Competências do PCCTAE (CRSC-PCCTAE) da UFV, constitui o registro reflexivo e sistematizado de uma trajetória profissional que resultou na construção de saberes e competências diferenciados — nos termos do Art. 15 do referido decreto — os quais fundamentam o pleito de Reconhecimento de Saberes e Competências no Nível VI, equivalente ao título de Doutor."
+
+---
+
+## PASSO 3: Executar o formatador com as narrativas
+
+```bash
+python3 run.py "RSC Detalhado_*.pdf" --narrativas narrativas.json
+```
+
+O `run.py` vai:
+1. Extrair os dados do PDF novamente (ou usar os mesmos)
+2. Carregar as narrativas do JSON
+3. Inserir cada narrativa no tópico correspondente
+4. Gerar o `.md` e o `.docx` formatados UFV/ABNT
+
+### Saída
+
+| Arquivo | Descrição |
+|---------|-----------|
+| `*_MEMORIAL.md` | Markdown UTF-8 — fonte de verdade |
+| `*_MEMORIAL.docx` | Word formatado UFV/ABNT (Arial 12pt, margens 3cm/2cm) |
+
+---
+
+## Comandos rápidos (resumo)
+
+```bash
+# 1. Extrair dados
+python3 run.py "RSC Detalhado_*.pdf" --dump-json dados_extraidos.json
+
+# 2. (VOCÊ, LLM) Gera narrativas.json a partir de dados_extraidos.json
+
+# 3. Gerar memorial com narrativas do LLM
+python3 run.py "RSC Detalhado_*.pdf" --narrativas narrativas.json
+
+# Fallback (sem narrativas do LLM — usa textos genéricos)
+python3 run.py "RSC Detalhado_*.pdf"
+```
+
+---
+
+## Novidades da v5.0
 
 | Funcionalidade | Descrição |
 |---|---|
-| **Ano de ingresso automático** | Extraído automaticamente da data de admissão no PDF — sem pergunta interativa |
-| **Lotação na narrativa** | Lotação do servidor extraída do PDF e inserida na introdução e agradecimentos |
-| **Epígrafe personalizada** | Seleção inteligente de citação baseada na lotação e perfil do servidor |
-| **Agradecimentos dinâmicos** | Menção personalizada à unidade de lotação |
-| **Capa com brasão** | Placeholder do brasão UFV na capa |
-| **PDF removido do fluxo** | Geração .pdf desativada — use o .docx para exportar PDF no Word/LibreOffice |
-| **DOCX sem markdown residual** | `*italic*` e `**bold**` convertidos corretamente em tabelas, listas e parágrafos |
+| **Narrativas LLM** | O agente PesquisAI gera textos longos em linguagem científica |
+| **`--narrativas`** | Novo parâmetro que aceita JSON com narrativas geradas pelo LLM |
+| **`--dump-json`** | Exporta dados extraídos do PDF para alimentar o LLM |
+| **Fallback genérico** | Sem `--narrativas`, o sistema gera textos dinâmicos (v4.0) |
+| **Estrutura flexível** | Critérios específicos podem ter ou não narrativa; fallback por critério |
+| **Reflexão completa** | Suporte a `reflexao_completa` que substitui as 3 subseções (9.1-9.3) |
 
-## Novidades da v3.1
+---
 
-| Funcionalidade | Descrição |
-|---|---|---|
-| **Estrutura idêntica ao referencial** | Seções e tópicos conforme memorial aprovado pela CRSC-PCCTAE |
-| **Introdução completa** | 1.1 Quem sou e o que apresento / 1.2 A essência do meu fazer profissional (3 dimensões) / 1.3 Fundamentos legais (requisitos do Nível VI) |
-| **Anexos com narrativa fluida** | Cada critério descrito em prosa, não em listas: "Memorialista: um construtor de comissões", "Uma trajetória de liderança institucional", "A face acadêmica de minha trajetória" |
-| **Verificação de requisitos legais (8.2)** | Tabela comparativa: pontuação mínima, critérios, Anexo VI, titulação |
-| **Reflexão Final (9.1-9.3)** | "Que saberes construí?" (5 saberes), "Qual minha contribuição singular?", "Pedido" |
-| **UFV/ABNT OBRIGATÓRIA** | Arial 12pt, margens 3L/3T/2R/2B, espaçamento 1.5, paginação, capa institucional, folha de rosto com natureza, dedicatória e epígrafe sem título, agradecimentos com CAPES |
-| **Extração COMPLETA** | Todos os 17 critérios com seus itens numéricos e pontos — sem truncamento |
-| **Modo automático (`--auto`)** | Usa 2009 como ano de ingresso padrão, sem interação |
-| **Ano automático** | Ano de ingresso extraído automaticamente da data de admissão do PDF |
-| **Lotação na narrativa** | Lotação extraída do PDF e inserida na introdução |
-| **Parser robusto** | Lida com artefatos de OCR e layout tabular complexo do PDF |
-
-## Fluxo
-
-```
-[PDF] RSC Detalhado_*.pdf
-    │
-    ▼
-[1] PARSER    → Extrai TODOS os dados estruturados:
-    │            • Cabeçalho: nome, matrícula, cargo, titulação, lotação
-    │            • Grupos I–VI: quantidade de critérios e pontuação
-    │            • 17 critérios com descrição, itens e pontos
-    │            • Nível RSC e equivalência acadêmica
-    ▼
-[2] ANO       → Se não informado via --ano-ingresso ou --auto,
-    │            pergunta interativamente o ano de ingresso na UFV
-    ▼
-[3] GERADOR   → Monta .md completo conforme Art. 13 do Decreto 13.048/2026:
-    │            ESTRUTURA IDÊNTICA ao memorial de referência aprovado:
-    │            CAPA → FOLHA DE ROSTO → DEDICATÓRIA → AGRADECIMENTOS →
-    │            EPÍGRAFE → LISTA DE SIGLAS → SUMÁRIO →
-    │            1 INTRODUÇÃO — TRAJETÓRIA E FUNDAMENTOS (Art. 13, II)
-    │              1.1 Quem sou e o que apresento
-    │              1.2 A essência do meu fazer profissional (3 dimensões)
-    │              1.3 Fundamentos legais (requisitos do Nível VI)
-    │            2 ANEXO I — Comissões (narrativa por critério)
-    │            3 ANEXO II — Projetos
-    │            4 ANEXO III — Premiações
-    │            5 ANEXO IV — Responsabilidades
-    │            6 ANEXO V — Direção (narrativa de liderança)
-    │            7 ANEXO VI — Produção Científica (narrativa acadêmica)
-    │            8 SÍNTESE DE PONTUAÇÃO (8.1 Quadro geral + 8.2 Verificação legal)
-    │            9 REFLEXÃO FINAL — SABERES E COMPETÊNCIAS (Art. 15)
-    │              9.1 Que saberes construí? / 9.2 Contribuição singular / 9.3 Pedido
-    │            REFERÊNCIAS
-    │            Escrita fluida em prosa narrativa, não em tópicos
-    ▼
-[4] FORMATADOR → .md → .docx (pandoc + python-docx):
-    │             A4, Arial 12pt, margens 3L/3T/2R/2B,
-    │             espaçamento 1.5, paginação UFV
-    │
-    │   *Para gerar PDF, use "Salvar como PDF" no Word/LibreOffice*
-```
-
-## Detecção de Nível e Equivalência
-
-O sistema lê automaticamente no PDF o campo **"RSC Requerido"** e analisa o
-texto para determinar a equivalência acadêmica:
-
-| Nível RSC | Base Legal (Art. 5º, §1º) | Equivalência |
-|-----------|---------------------------|--------------|
-| **Nível VI** | Servidor com diploma de **mestrado** (75%) | **Doutorado** |
-| **Nível V** | Servidor com certificado de **pós-graduação lato sensu** (52%) | **Mestrado** |
-| **Nível IV** | Servidor com diploma de **graduação** (30%) | **Graduação** |
-
-A equivalência é automaticamente inserida no texto do memorial (título, folha de rosto,
-reflexão final).
-
-## Uso
-
-```bash
-python3 /caminho/para/run.py <caminho_do_pdf> [opções]
-```
-
-### Parâmetros
+## Parâmetros completos
 
 | Parâmetro | Descrição |
 |-----------|-----------|
@@ -133,101 +237,51 @@ python3 /caminho/para/run.py <caminho_do_pdf> [opções]
 | `--output-dir, -o` | Diretório de saída (padrão: mesmo diretório do PDF) |
 | `--nome, -n` | Nome do autor (padrão: extraído do PDF) |
 | `--ano-ingresso, -a` | Ano de ingresso na UFV (opcional) |
-| `--auto` | Modo automático: usa 2009 como ano de ingresso se não informado |
+| `--auto` | Modo automático: extrai ano da data de admissão |
+| `--narrativas, -N` | JSON com narrativas geradas pelo LLM |
+| `--dump-json, -J` | Exporta dados extraídos para JSON (sem gerar memorial) |
 
-### Modo interativo
+---
 
-Se `--ano-ingresso` não for fornecido e `--auto` não estiver ativo,
-o sistema perguntará:
+## Estrutura do memorial gerado
 
 ```
-📅 Em que ano você ingressou na UFV? 1992
+PRÉ-TEXTUAIS: CAPA → FOLHA DE ROSTO → DEDICATÓRIA → AGRADECIMENTOS →
+              EPÍGRAFE → LISTA DE SIGLAS → SUMÁRIO
+
+1 INTRODUÇÃO — TRAJETÓRIA E FUNDAMENTOS
+  1.1 Quem sou e o que apresento     ← narrativa LLM
+  1.2 A essência do meu fazer profissional  ← narrativa LLM + dimensões
+  1.3 Fundamentos legais              ← narrativa LLM
+
+2 ANEXO I — Comissões                 ← narrativa LLM + narrativas por critério
+3 ANEXO II — Projetos                 ← narrativa LLM + narrativas por critério
+4 ANEXO III — Premiações              ← narrativa LLM
+5 ANEXO IV — Responsabilidades        ← narrativa LLM + narrativas por critério
+6 ANEXO V — Direção                   ← narrativa LLM + narrativas por critério
+7 ANEXO VI — Produção Científica      ← narrativa LLM + narrativas por critério
+
+8 SÍNTESE DE PONTUAÇÃO
+  8.1 Quadro geral (tabela extraída do PDF)
+  8.2 Verificação dos requisitos legais
+
+9 REFLEXÃO FINAL — SABERES E COMPETÊNCIAS
+  9.1 Que saberes construí?           ← narrativa LLM
+  9.2 Qual minha contribuição singular? ← narrativa LLM
+  9.3 Pedido                          ← narrativa LLM
+
+REFERÊNCIAS
 ```
 
-### Exemplos
+---
+
+## Requisitos
 
 ```bash
-# Básico (pergunta o ano de ingresso interativamente)
-python3 run.py "RSC Detalhado_03jun.pdf"
-
-# Com diretório de saída e ano de ingresso
-python3 run.py "RSC Detalhado_03jun.pdf" -o "/content/drive/My Drive/MeuMemorial" -a 1992
-
-# Modo automático (usa 2009 como ano de ingresso)
-python3 run.py "RSC Detalhado_03jun.pdf" --auto
-
-# Forçando nome do autor
-python3 run.py "RSC Detalhado_03jun.pdf" -n "MARIA DA SILVA" -a 2005 --auto
+pip install pdfplumber python-docx pyspellchecker
 ```
 
-### Saída
-
-| Arquivo | Formato | Descrição |
-|---------|---------|-----------|
-| `*_MEMORIAL.md` | Markdown UTF-8 | Fonte de verdade — texto completo em prosa |
-| `*_MEMORIAL.docx` | Word — UFV/ABNT | Formatado Arial 12pt, margens UFV |
-
-## Estrutura do memorial gerado (conforme Decreto nº 13.048/2026, Art. 13)
-
-```
-┌─ CAPA                  UNIVERSIDADE FEDERAL DE VIÇOSA → Autor → Título → Cidade → Ano
-├─ FOLHA DE ROSTO        Autor → Título → Natureza (recuada 4cm) → Cidade → Ano
-├─ DEDICATÓRIA           Texto à direita (sem título)
-├─ AGRADECIMENTOS        Obrigatório UFV-PPG (inclui CAPES)
-├─ EPÍGRAFE              (sem título)
-├─ LISTA DE SIGLAS
-├─ SUMÁRIO               Último pré-textual
-│
-│  ESTRUTURA IDÊNTICA AO MEMORIAL DE REFERÊNCIA APROVADO PELA CRSC-PCCTAE
-│
-├─ 1 INTRODUÇÃO — TRAJETÓRIA E FUNDAMENTOS
-│   ├─ 1.1 Quem sou e o que apresento
-│   ├─ 1.2 A essência do meu fazer profissional (3 dimensões)
-│   └─ 1.3 Fundamentos legais (requisitos do Nível VI)
-│
-├─ 2 ANEXO I   — Comissões (narrativa: "Memorialista: um construtor de comissões")
-│   ├─ 2.1 Memorialista: um construtor de comissões
-│   ├─ 2.2 Item I-1: Conselhos superiores
-│   ├─ 2.3 Item I-2: Coordenação/presidência
-│   ├─ 2.4 Item I-3: Membro de comissões
-│   ├─ 2.5 Item I-5: Vestibulares/concursos
-│   └─ 2.6 Item I-6: Elaboração de provas
-│
-├─ 3 ANEXO II  — Projetos
-│   ├─ 3.1 Pesquisa acadêmica: REUNI
-│   └─ 3.2 Avaliação de trabalhos
-│
-├─ 4 ANEXO III — Premiações
-│
-├─ 5 ANEXO IV  — Responsabilidades Técnico-Administrativas
-│   ├─ 5.1 Item IV-1: Sistemas estruturantes
-│   └─ 5.2 Item IV-7: Sistemas institucionais
-│
-├─ 6 ANEXO V   — Direção / Assessoramento
-│   ├─ 6.1 Uma trajetória de liderança institucional
-│   ├─ 6.2 Item V-1: CD-02 (Pró-Reitor substituto)
-│   ├─ 6.3 Item V-2: CD-03/04 (Assessor Especial)
-│   ├─ 6.4 Item V-3: FG-01/02 (Chefe de Divisão)
-│   └─ 6.5 Item V-4: FG-03+ (Chefia de Setor)
-│
-├─ 7 ANEXO VI  — Produção Científica
-│   ├─ 7.1 A face acadêmica de minha trajetória
-│   ├─ 7.2 Item VI-9: Livro com ISBN
-│   ├─ 7.3 Item VI-10: Artigos publicados
-│   ├─ 7.4 Item VI-15: Instrutor
-│   └─ 7.5 Item VI-16: Coordenação de eventos
-│
-├─ 8 SÍNTESE DE PONTUAÇÃO
-│   ├─ 8.1 Quadro geral (tabela)
-│   └─ 8.2 Verificação dos requisitos legais (tabela de conformidade)
-│
-├─ 9 REFLEXÃO FINAL — SABERES E COMPETÊNCIAS
-│   ├─ 9.1 Que saberes construí? (5 saberes)
-│   ├─ 9.2 Qual minha contribuição singular?
-│   └─ 9.3 Pedido
-│
-└─ REFERÊNCIAS
-```
+---
 
 ## Base legal
 
@@ -242,38 +296,8 @@ python3 run.py "RSC Detalhado_03jun.pdf" -n "MARIA DA SILVA" -a 2005 --auto
   > demonstre os saberes, as competências e as experiências relacionados ao nível
   > de RSC-PCCTAE pleiteado"
 
-  > **Art. 13, §1º:** O memorial deverá apresentar, de forma clara e objetiva:
-  > I - descrição das atividades e das experiências profissionais e individuais
-  > vinculadas aos requisitos previstos no art. 3º, caput, incisos I a VI;
-  > II - demonstração de que o conjunto da trajetória profissional se alinha ao
-  > padrão de conhecimentos e competências que justificam o reconhecimento naquele nível.
-
-## Requisitos
-
-```bash
-pip install pdfplumber python-docx weasyprint pyspellchecker
-```
-
-Além disso, **pandoc** deve estar instalado no sistema para conversão .md → .pdf
-(via weasyprint) e .md → .docx (via referência do python-docx).
-
-## Estrutura do skill
-
-```
-pdf-to-memorial-rsc/
-├── run.py               # Gerador autônomo v3.2
-├── SKILL.md             # Esta documentação
-├── template/
-│   ├── memorial_blueprint.py   # Blueprint estrutural
-│   └── memorial_structure.md   # Template markdown
-└── examples/
-    ├── memorial_rsc_example.md # Exemplo de memorial gerado
-    └── README.md               # Instruções do exemplo
-```
-
 ## Localização
 
-- **Script:** `vault/skills/pdf-to-memorial-rsc/run.py`
-- **Skill:** `vault/skills/pdf-to-memorial-rsc/SKILL.md`
-- **Template:** `vault/skills/pdf-to-memorial-rsc/template/`
-- **Zip:** `pdf-to-memorial-rsc-skill-v3.0.zip`
+- **Script:** `/root/.agents/skills/memorial/run.py`
+- **Skill:** `/root/.agents/skills/memorial/SKILL.md`
+- **Template:** `/root/.agents/skills/memorial/template/`

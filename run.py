@@ -1,21 +1,32 @@
 #!/usr/bin/env python3
 """
 =============================================================================
-PDF -> Memorial RSC-PCCTAE — Gerador Autônomo v4.0 (GENÉRICO)
+PDF -> Memorial RSC-PCCTAE — Gerador Autônomo v5.0 (NARRATIVAS LLM)
 =============================================================================
 Gera o memorial completo de Reconhecimento de Saberes e Competências (RSC-PCCTAE)
 autonomamente a partir do PDF oficial do Relatório Detalhado RSC emitido pelo
 sistema da UFV (Pró-Reitoria de Gestão de Pessoas), em conformidade com o
 Decreto nº 13.048, de 3 de julho de 2026 (Art. 13).
 
-v4.0 — NENHUM texto hardcoded. Todo o conteúdo é extraído do PDF.
-        Narrativas geradas dinamicamente a partir dos critérios e itens.
-        Sem referências a pessoas, portarias, cursos ou dados de exemplo.
-        A IA gera tudo a cada novo pedido.
+v5.0 — Narrativas geradas pelo LLM (Large Language Model) em linguagem
+        científica, longa e detalhada — como o memorial de um professor
+        titular. O run.py recebe as narrativas via JSON e as insere nos
+        tópicos pré-estabelecidos da estrutura.
+
+FLUXO RECOMENDADO:
+  1. run.py extrai dados do PDF para JSON
+     $ python3 run.py relatorio.pdf --dump-json dados_extraidos.json
+  
+  2. LLM (agente PesquisAI) gera narrativas detalhadas a partir dos dados
+     -> narrativas.json (ver SKILL.md para o prompt completo)
+  
+  3. run.py monta o memorial com as narrativas do LLM
+     $ python3 run.py relatorio.pdf --narrativas narrativas.json
 
 Uso:
   python3 run.py <caminho_do_pdf> [--output-dir DIR] [--nome "Nome"]
                  [--ano-ingresso ANO] [--auto]
+                 [--narrativas JSON] [--dump-json ARQUIVO]
 
 Dependências:
   pip install pdfplumber python-docx pyspellchecker
@@ -428,18 +439,173 @@ class RSCPDFParser:
             self.data['criterios'][key] = crit_data
             if key not in self.data['ordem_criterios']:
                 self.data['ordem_criterios'].append(key)
-            i = j + 1
+            i = j  # j já está na linha do próximo critério (break) ou além do fim
 
         self.data['ordem_criterios'].sort(key=lambda k: ordem_map.get(k, 99))
 
 
 # =============================================================================
-# GERADOR DO MEMORIAL v4.0 — 100% extraído do PDF
+# NARRATIVE ENGINE v5.0 — integração com narrativas geradas pelo LLM
+# =============================================================================
+class NarrativeEngine:
+    """Carrega e gerencia narrativas geradas pelo LLM para o memorial.
+
+    As narrativas são textos longos, em linguagem científica, como o
+    memorial de um professor titular. Este engine substitui os textos
+    genéricos do MemorialGenerator pelos textos do LLM quando um JSON
+    de narrativas é fornecido.
+    """
+
+    ESTRUTURA_ESPERADA = {
+        # Seção 1 — Introdução
+        'introducao_quem_sou': '1.1 Quem sou e o que apresento — texto completo',
+        'introducao_essencia': '1.2 A essência do meu fazer profissional — texto completo',
+        'introducao_dimensoes': 'Lista de 3 dimensões com descrições (array de strings)',
+        'introducao_fundamentos': '1.3 Fundamentos legais — texto completo',
+
+        # Anexo I — Comissões
+        'anexo_I_intro': 'Texto introdutório do Anexo I',
+        'anexo_I_criterios': {
+            'I-01': 'Texto detalhado para I-1: Conselhos superiores',
+            'I-02': 'Texto detalhado para I-2: Coordenação/presidência',
+            'I-03': 'Texto detalhado para I-3: Membro de comissões',
+            'I-04': 'Texto detalhado para I-4: Comissões permanentes',
+            'I-05': 'Texto detalhado para I-5: Vestibulares/concursos',
+            'I-06': 'Texto detalhado para I-6: Elaboração de provas',
+            'I-07': 'Texto detalhado para I-7: Organização de eventos',
+        },
+
+        # Anexo II — Projetos
+        'anexo_II_intro': 'Texto introdutório do Anexo II',
+        'anexo_II_criterios': {
+            'II-01': 'Texto detalhado para II-1',
+            'II-02': 'Texto detalhado para II-2',
+            'II-03': 'Texto detalhado para II-3',
+            'II-04': 'Texto detalhado para II-4',
+            'II-05': 'Texto detalhado para II-5',
+            'II-06': 'Texto detalhado para II-6',
+            'II-07': 'Texto detalhado para II-7',
+        },
+
+        # Anexo III — Premiações
+        'anexo_III': 'Texto completo do Anexo III',
+
+        # Anexo IV — Responsabilidades
+        'anexo_IV_intro': 'Texto introdutório do Anexo IV',
+        'anexo_IV_criterios': {
+            'IV-01': 'Texto detalhado para IV-1',
+            'IV-02': 'Texto detalhado para IV-2',
+            'IV-03': 'Texto detalhado para IV-3',
+            'IV-04': 'Texto detalhado para IV-4',
+            'IV-05': 'Texto detalhado para IV-5',
+            'IV-06': 'Texto detalhado para IV-6',
+            'IV-07': 'Texto detalhado para IV-7',
+        },
+
+        # Anexo V — Direção
+        'anexo_V_intro': 'Texto introdutório do Anexo V',
+        'anexo_V_criterios': {
+            'V-01': 'Texto detalhado para V-1',
+            'V-02': 'Texto detalhado para V-2',
+            'V-03': 'Texto detalhado para V-3',
+            'V-04': 'Texto detalhado para V-4',
+            'V-05': 'Texto detalhado para V-5',
+        },
+
+        # Anexo VI — Produção
+        'anexo_VI_intro': 'Texto introdutório do Anexo VI',
+        'anexo_VI_criterios': {
+            'VI-01': 'Texto detalhado para VI-1',
+            'VI-02': 'Texto detalhado para VI-2',
+            'VI-03': 'Texto detalhado para VI-3',
+            'VI-04': 'Texto detalhado para VI-4',
+            'VI-05': 'Texto detalhado para VI-5',
+            'VI-06': 'Texto detalhado para VI-6',
+            'VI-07': 'Texto detalhado para VI-7',
+            'VI-08': 'Texto detalhado para VI-8',
+            'VI-09': 'Texto detalhado para VI-9: Livro com ISBN',
+            'VI-10': 'Texto detalhado para VI-10: Artigos publicados',
+            'VI-11': 'Texto detalhado para VI-11',
+            'VI-12': 'Texto detalhado para VI-12',
+            'VI-13': 'Texto detalhado para VI-13',
+            'VI-14': 'Texto detalhado para VI-14',
+            'VI-15': 'Texto detalhado para VI-15: Instrutor',
+            'VI-16': 'Texto detalhado para VI-16: Coordenação de eventos',
+            'VI-17': 'Texto detalhado para VI-17',
+        },
+
+        # Reflexão Final
+        'reflexao_saberes': '9.1 Que saberes construí? — texto completo',
+        'reflexao_contribuicao': '9.2 Qual minha contribuição singular? — texto completo',
+        'reflexao_pedido': '9.3 Pedido — texto completo',
+        'reflexao_completa': 'Texto completo da seção 9 (substitui as 3 subseções acima se presente)',
+    }
+
+    def __init__(self, json_path=None):
+        self.narrativas = {}
+        if json_path:
+            self.carregar(json_path)
+
+    def carregar(self, json_path):
+        """Carrega narrativas de um arquivo JSON."""
+        path = Path(json_path)
+        if not path.exists():
+            raise FileNotFoundError(f"Arquivo de narrativas não encontrado: {json_path}")
+        with open(path, 'r', encoding='utf-8') as f:
+            self.narrativas = json.load(f)
+        print(f"   Narrativas carregadas: {json_path} ({len(self.narrativas)} campos)")
+
+    def tem(self, chave):
+        """Verifica se uma narrativa existe para determinada chave."""
+        return chave in self.narrativas and self.narrativas[chave] and len(str(self.narrativas[chave])) > 50
+
+    def get(self, chave, padrao=''):
+        """Retorna a narrativa para a chave, ou o padrão se não existir."""
+        if self.tem(chave):
+            return self.narrativas[chave]
+        return padrao
+
+    def get_criterio(self, key, padrao=''):
+        """Busca narrativa de critério nas estruturas aninhadas."""
+        prefix = key.split('-')[0]
+        mapa_chaves = {
+            'I': 'anexo_I_criterios', 'II': 'anexo_II_criterios',
+            'IV': 'anexo_IV_criterios', 'V': 'anexo_V_criterios',
+            'VI': 'anexo_VI_criterios',
+        }
+        mapa = mapa_chaves.get(prefix)
+        if mapa and mapa in self.narrativas:
+            criterios = self.narrativas[mapa]
+            if isinstance(criterios, dict) and key in criterios:
+                txt = criterios[key]
+                if txt and len(str(txt)) > 50:
+                    return txt
+        return padrao
+
+    def get_dimensoes(self):
+        """Retorna lista de dimensões da introdução (array de strings)."""
+        if 'introducao_dimensoes' in self.narrativas:
+            dims = self.narrativas['introducao_dimensoes']
+            if isinstance(dims, list) and len(dims) >= 2:
+                return dims
+            if isinstance(dims, str) and len(dims) > 50:
+                return [dims]
+        return []
+
+    def get_reflexao_completa(self):
+        """Retorna a reflexão completa se disponível."""
+        if self.tem('reflexao_completa'):
+            return self.narrativas['reflexao_completa']
+        return None
+
+
+# =============================================================================
+# GERADOR DO MEMORIAL v5.0 — Narrativas do LLM + fallback genérico
 # =============================================================================
 class MemorialGenerator:
     """Gera memorial com narrativas geradas DINAMICAMENTE a partir dos dados extraídos."""
 
-    def __init__(self, data, ano_ingresso):
+    def __init__(self, data, ano_ingresso, narrative_engine=None):
         self.d = data
         self.ano_ingresso = ano_ingresso
         self.ano_atual = datetime.now().year
@@ -448,6 +614,8 @@ class MemorialGenerator:
         self.nome = data['nome']
         self.lotacao = data.get('lotacao', '')
         self.equivalente = self.nivel['equivalente']
+        self.ne = narrative_engine if narrative_engine and narrative_engine.narrativas else None
+        self._usando_llm = self.ne is not None
 
     def _n_arr(self, items):
         """Concatena itens com separação natural."""
@@ -461,95 +629,115 @@ class MemorialGenerator:
     # ---- Narrativas dinâmicas ----
 
     def _desc_anexo_I(self, g, c):
-        """Narrativa dinâmica para Anexo I (Comissões)."""
+        """Narrativa dinâmica para Anexo I (Comissões) — usa LLM se disponível."""
         md = []
         qtd_criterios = g['criterios']
-        total_itens = sum(len(c[k]['itens']) for k in c if k.startswith('I-') and c[k]['itens'])
-        desc_geral = ' e '.join(
-            'membro de comissões' if 'I-03' in c else '' or
-            'presidente de comissões' if 'I-02' in c else '' or
-            'conselhos superiores' if 'I-01' in c else '' or
-            'concursos e vestibulares' if 'I-05' in c else '' or
-            'elaboração de provas' if 'I-06' in c else ''
-            for _ in [1]
-        )
-        if not desc_geral:
-            desc_geral = f'{qtd_criterios} critérios de comissões e grupos de trabalho'
 
-        md.append(f"## 2.1 Memorialista: atuação em comissões\n\n")
-        md.append(
-            f"Ao longo da carreira, participei ativamente de comissões e grupos de trabalho "
-            f"na UFV, atuando como {desc_geral}. Foram {qtd_criterios} critérios com "
-            f"pontuação no Anexo I, totalizando {fmt_br(g['pontos'])} pontos. "
-            f"Essa atuação me permitiu contribuir para a gestão universitária em suas "
-            f"dimensões normativa, administrativa e estratégica.\n\n"
-        )
+        if self._usando_llm and self.ne.get('anexo_I_intro'):
+            md.append(self.ne.get('anexo_I_intro') + "\n\n")
+        else:
+            desc_geral = ' e '.join(
+                'membro de comissões' if 'I-03' in c else '' or
+                'presidente de comissões' if 'I-02' in c else '' or
+                'conselhos superiores' if 'I-01' in c else '' or
+                'concursos e vestibulares' if 'I-05' in c else '' or
+                'elaboração de provas' if 'I-06' in c else ''
+                for _ in [1]
+            )
+            if not desc_geral:
+                desc_geral = f'{qtd_criterios} critérios de comissões e grupos de trabalho'
 
-        # Narrativa dinâmica de cada critério
+            md.append(f"## 2.1 Memorialista: atuação em comissões\n\n")
+            md.append(
+                f"Ao longo da carreira, participei ativamente de comissões e grupos de trabalho "
+                f"na UFV, atuando como {desc_geral}. Foram {qtd_criterios} critérios com "
+                f"pontuação no Anexo I, totalizando {fmt_br(g['pontos'])} pontos. "
+                f"Essa atuação me permitiu contribuir para a gestão universitária em suas "
+                f"dimensões normativa, administrativa e estratégica.\n\n"
+            )
+
+        # Narrativa de cada critério
         for key, info in sorted(c.items(), key=lambda x: x[1].get('ordem', 99)):
             if not key.startswith('I-'):
                 continue
             num_items = len(info['itens'])
-            # Determinar qual item da ordem
-            sub_num = info['numero']
-            sub_titulo = info['key'].replace('-', '-')
 
-            if info['descricao']:
-                resumo_desc = info['descricao'][:150].strip()
+            # Tenta usar narrativa do LLM para este critério
+            txt_llm = self.ne.get_criterio(key) if self._usando_llm else ''
+
+            if txt_llm:
+                sub_num = int(info['numero']) if info['numero'].isdigit() else 0
+                md.append(f"## 2.{sub_num + 1} Item I-{info['numero']}\n\n")
+                md.append(txt_llm + "\n\n")
+                # Anexa itens comprobatórios mesmo com narrativa LLM
+                if info['itens']:
+                    md.append("**Itens comprobatórios:**\n\n")
+                    for item in info['itens']:
+                        if isinstance(item, dict):
+                            md.append(f"- Item {item['num']}: {item['texto'][:200]}\n")
+                        else:
+                            md.append(f"- {str(item)[:200]}\n")
+                    md.append("\n")
             else:
-                resumo_desc = ''
-
-            md.append(
-                f"## 2.{int(info['numero'])+1 if len(info['numero'])<2 else '?'} "
-                f"Item I-{info['numero']}: {resumo_desc[:100] if resumo_desc else 'Atuação em comissão'}\n\n"
-            )
-
-            md.append(
-                f"Este critério refere-se a: {resumo_desc if resumo_desc else 'atividades de comissão'}. "
-                f"Foram registrados {num_items} itens comprobatórios, "
-                f"com pontuação de {fmt_br(info.get('pontos', 0))} pontos.\n\n"
-            )
-
-            # Lista itens se existirem
-            if info['itens']:
-                md.append("**Itens comprobatórios:**\n\n")
-                for item in info['itens']:
-                    if isinstance(item, dict):
-                        md.append(f"- Item {item['num']}: {item['texto'][:200]}\n")
-                    else:
-                        md.append(f"- {str(item)[:200]}\n")
-                md.append("\n")
+                resumo_desc = info['descricao'][:150].strip() if info['descricao'] else ''
+                sub_num = int(info['numero']) if info['numero'].isdigit() else 0
+                md.append(
+                    f"## 2.{sub_num + 1} "
+                    f"Item I-{info['numero']}: {resumo_desc[:100] if resumo_desc else 'Atuação em comissão'}\n\n"
+                )
+                md.append(
+                    f"Este critério refere-se a: {resumo_desc if resumo_desc else 'atividades de comissão'}. "
+                    f"Foram registrados {num_items} itens comprobatórios, "
+                    f"com pontuação de {fmt_br(info.get('pontos', 0))} pontos.\n\n"
+                )
+                if info['itens']:
+                    md.append("**Itens comprobatórios:**\n\n")
+                    for item in info['itens']:
+                        if isinstance(item, dict):
+                            md.append(f"- Item {item['num']}: {item['texto'][:200]}\n")
+                        else:
+                            md.append(f"- {str(item)[:200]}\n")
+                    md.append("\n")
 
         return md
 
     def _desc_anexo_II(self, g, c):
-        """Narrativa dinâmica para Anexo II (Projetos)."""
+        """Narrativa dinâmica para Anexo II (Projetos) — usa LLM se disponível."""
         md = []
-        md.append("## 3.1 Atuação em projetos institucionais\n\n")
+        if self._usando_llm and self.ne.get('anexo_II_intro'):
+            md.append(self.ne.get('anexo_II_intro') + "\n\n")
+        else:
+            md.append("## 3.1 Atuação em projetos institucionais\n\n")
+            if g['pontos'] > 0:
+                qtd = len([k for k in c if k.startswith('II-')])
+                md.append(
+                    f"Participei de projetos institucionais que contribuíram para o "
+                    f"desenvolvimento da UFV. Foram {qtd} critérios com {fmt_br(g['pontos'])} pontos. "
+                    f"Esses projetos envolveram pesquisa acadêmica, desenvolvimento de "
+                    f"metodologias e avaliação de trabalhos.\n\n"
+                )
+            else:
+                md.append("Não há critérios pontuados neste anexo.\n\n")
+
         if g['pontos'] > 0:
-            qtd = len([k for k in c if k.startswith('II-')])
-            md.append(
-                f"Participei de projetos institucionais que contribuíram para o "
-                f"desenvolvimento da UFV. Foram {qtd} critérios com {fmt_br(g['pontos'])} pontos. "
-                f"Esses projetos envolveram pesquisa acadêmica, desenvolvimento de "
-                f"metodologias e avaliação de trabalhos.\n\n"
-            )
             for key, info in sorted(c.items(), key=lambda x: x[1].get('ordem', 99)):
                 if not key.startswith('II-'):
                     continue
-                num_items = len(info['itens'])
-                resumo = info['descricao'][:200] if info['descricao'] else 'Atuação em projeto'
-                md.append(
-                    f"## 3.{self._sub_anexo_n(key, c)} "
-                    f"Item II-{info['numero']}: {resumo[:100]}\n\n"
-                )
-                md.append(f"{resumo}. Pontuação: {fmt_br(info.get('pontos', 0))} pts.\n\n")
+                txt_llm = self.ne.get_criterio(key) if self._usando_llm else ''
+                if txt_llm:
+                    md.append(f"## 3.{self._sub_anexo_n(key, c)} Item II-{info['numero']}\n\n")
+                    md.append(txt_llm + "\n\n")
+                else:
+                    resumo = info['descricao'][:200] if info['descricao'] else 'Atuação em projeto'
+                    md.append(
+                        f"## 3.{self._sub_anexo_n(key, c)} "
+                        f"Item II-{info['numero']}: {resumo[:100]}\n\n"
+                    )
+                    md.append(f"{resumo}. Pontuação: {fmt_br(info.get('pontos', 0))} pts.\n\n")
                 if info['itens']:
                     for item in info['itens']:
                         md.append(f"- Item {item['num']}: {item['texto'][:200]}\n")
                     md.append("\n")
-        else:
-            md.append("Não há critérios pontuados neste anexo.\n\n")
         return md
 
     def _sub_anexo_n(self, key, all_c):
@@ -563,158 +751,209 @@ class MemorialGenerator:
             return 2
 
     def _desc_anexo_III(self, g):
-        """Anexo III - Premiações."""
+        """Anexo III - Premiações — usa LLM se disponível."""
         md = []
-        if g['pontos'] > 0:
-            md.append(f"Recebi premiações ou reconhecimentos formais ao longo da carreira.\n\n")
+        if self._usando_llm and self.ne.get('anexo_III'):
+            md.append(self.ne.get('anexo_III') + "\n\n")
         else:
-            md.append("Declaro que não recebi premiações formais que possam ser enquadradas neste Anexo.\n\n")
+            if g['pontos'] > 0:
+                md.append(f"Recebi premiações ou reconhecimentos formais ao longo da carreira.\n\n")
+            else:
+                md.append("Declaro que não recebi premiações formais que possam ser enquadradas neste Anexo.\n\n")
         return md
 
     def _desc_anexo_IV(self, g, c):
-        """Anexo IV - Responsabilidades."""
+        """Anexo IV - Responsabilidades — usa LLM se disponível."""
         md = []
+        if self._usando_llm and self.ne.get('anexo_IV_intro'):
+            md.append(self.ne.get('anexo_IV_intro') + "\n\n")
+        else:
+            if g['pontos'] > 0:
+                md.append("Fui designado para responsabilidades técnico-administrativas específicas.\n\n")
+            else:
+                md.append(
+                    "Registro as designações para atuação em sistemas e processos administrativos "
+                    "conforme constam no sistema oficial da UFV.\n\n"
+                )
+
         if g['pontos'] > 0:
-            md.append("Fui designado para responsabilidades técnico-administrativas específicas.\n\n")
             for key, info in sorted(c.items(), key=lambda x: x[1].get('ordem', 99)):
                 if not key.startswith('IV-'):
                     continue
-                resumo = info['descricao'][:200] if info['descricao'] else ''
-                md.append(
-                    f"Item IV-{info['numero']}: {resumo[:100] if resumo else 'Responsabilidade técnica'}. "
-                    f"Pontuação: {fmt_br(info.get('pontos', 0))} pts.\n\n"
-                )
+                txt_llm = self.ne.get_criterio(key) if self._usando_llm else ''
+                if txt_llm:
+                    md.append(f"**Item IV-{info['numero']}**\n\n{txt_llm}\n\n")
+                else:
+                    resumo = info['descricao'][:200] if info['descricao'] else ''
+                    md.append(
+                        f"Item IV-{info['numero']}: {resumo[:100] if resumo else 'Responsabilidade técnica'}. "
+                        f"Pontuação: {fmt_br(info.get('pontos', 0))} pts.\n\n"
+                    )
                 if info['itens']:
                     for item in info['itens']:
                         md.append(f"- Item {item['num']}: {item['texto'][:200]}\n")
                     md.append("\n")
-        else:
-            md.append(
-                "Registro as designações para atuação em sistemas e processos administrativos "
-                "conforme constam no sistema oficial da UFV.\n\n"
-            )
         return md
 
     def _desc_anexo_V(self, g, c):
-        """Anexo V - Direção."""
+        """Anexo V - Direção — usa LLM se disponível."""
         md = []
-        md.append("## 6.1 Trajetória de liderança institucional\n\n")
+        if self._usando_llm and self.ne.get('anexo_V_intro'):
+            md.append(self.ne.get('anexo_V_intro') + "\n\n")
+        else:
+            if g['pontos'] > 0:
+                md.append("## 6.1 Trajetória de liderança institucional\n\n")
+                md.append(
+                    "Um dos aspectos significativos da carreira foi o exercício de cargos "
+                    "de direção e funções gratificadas, que permitiram contribuir diretamente "
+                    "para a formulação e execução de políticas institucionais na UFV.\n\n"
+                )
+            else:
+                md.append(
+                    "Não há critérios pontuados para cargos de direção ou assessoramento "
+                    "neste Anexo.\n\n"
+                )
+
         if g['pontos'] > 0:
-            md.append(
-                "Um dos aspectos significativos da carreira foi o exercício de cargos "
-                "de direção e funções gratificadas, que permitiram contribuir diretamente "
-                "para a formulação e execução de políticas institucionais na UFV.\n\n"
-            )
             for key, info in sorted(c.items(), key=lambda x: x[1].get('ordem', 99)):
                 if not key.startswith('V-'):
                     continue
-                resumo = info['descricao'][:200] if info['descricao'] else ''
-                num_items = len(info['itens'])
-                md.append(
-                    f"## 6.{int(info['numero'])+1} Item V-{info['numero']}: {resumo[:100] if resumo else 'Cargo de direção'}\n\n"
-                )
-                md.append(f"{resumo}. Pontuação: {fmt_br(info.get('pontos', 0))} pts.\n\n")
+                txt_llm = self.ne.get_criterio(key) if self._usando_llm else ''
+                if txt_llm:
+                    md.append(f"## 6.{int(info['numero'])+1} Item V-{info['numero']}\n\n")
+                    md.append(txt_llm + "\n\n")
+                else:
+                    resumo = info['descricao'][:200] if info['descricao'] else ''
+                    md.append(
+                        f"## 6.{int(info['numero'])+1} Item V-{info['numero']}: {resumo[:100] if resumo else 'Cargo de direção'}\n\n"
+                    )
+                    md.append(f"{resumo}. Pontuação: {fmt_br(info.get('pontos', 0))} pts.\n\n")
                 if info['itens']:
                     for item in info['itens']:
                         md.append(f"- Item {item['num']}: {item['texto'][:200]}\n")
                     md.append("\n")
-        else:
-            md.append(
-                "Não há critérios pontuados para cargos de direção ou assessoramento "
-                "neste Anexo.\n\n"
-            )
         return md
 
     def _desc_anexo_VI(self, g, c):
-        """Anexo VI - Produção."""
+        """Anexo VI - Produção — usa LLM se disponível."""
         md = []
-        md.append("## 7.1 Produção e difusão de conhecimento\n\n")
+        if self._usando_llm and self.ne.get('anexo_VI_intro'):
+            md.append(self.ne.get('anexo_VI_intro') + "\n\n")
+        else:
+            if g['pontos'] > 0:
+                md.append("## 7.1 Produção e difusão de conhecimento\n\n")
+                md.append(
+                    "Ao longo da carreira, busquei não apenas executar atividades, mas também "
+                    "produzir e difundir conhecimento técnico e científico.\n\n"
+                )
+            else:
+                md.append("Não há critérios pontuados neste Anexo.\n\n")
+
         if g['pontos'] > 0:
-            md.append(
-                "Ao longo da carreira, busquei não apenas executar atividades, mas também "
-                "produzir e difundir conhecimento técnico e científico.\n\n"
-            )
             for key, info in sorted(c.items(), key=lambda x: x[1].get('ordem', 99)):
                 if not key.startswith('VI-'):
                     continue
-                resumo = info['descricao'][:300] if info['descricao'] else ''
-                md.append(
-                    f"## 7.{int(info['numero']) - 8 if key in ['VI-09','VI-10','VI-15','VI-16'] else self._sub_anexo_n(key, c)} "
-                    f"Item VI-{info['numero']}: {resumo[:100]}\n\n"
-                )
-                md.append(f"{resumo}. Pontuação: {fmt_br(info.get('pontos', 0))} pts.\n\n")
+                txt_llm = self.ne.get_criterio(key) if self._usando_llm else ''
+                if txt_llm:
+                    md.append(f"## 7.{int(info['numero']) - 8 if key in ['VI-09','VI-10','VI-15','VI-16'] else self._sub_anexo_n(key, c)} "
+                              f"Item VI-{info['numero']}\n\n")
+                    md.append(txt_llm + "\n\n")
+                else:
+                    resumo = info['descricao'][:300] if info['descricao'] else ''
+                    md.append(
+                        f"## 7.{int(info['numero']) - 8 if key in ['VI-09','VI-10','VI-15','VI-16'] else self._sub_anexo_n(key, c)} "
+                        f"Item VI-{info['numero']}: {resumo[:100]}\n\n"
+                    )
+                    md.append(f"{resumo}. Pontuação: {fmt_br(info.get('pontos', 0))} pts.\n\n")
                 if info['itens']:
                     for item in info['itens']:
                         md.append(f"- Item {item['num']}: {item['texto'][:200]}\n")
                     md.append("\n")
-        else:
-            md.append("Não há critérios pontuados neste Anexo.\n\n")
         return md
 
     def _gerar_reflexao(self):
-        """Gera reflexão final dinâmica baseada nos dados."""
+        """Gera reflexão final — usa LLM se disponível."""
         total = fmt_br(self.d['total_geral'])
         g = self.d['grupos']
 
-        # Quais anexos têm pontuação
-        anexos_ativos = []
-        for grp in g:
-            if grp['pontos'] > 0:
-                anexos_ativos.append(grp['nome_curto'])
+        # Se tem reflexão completa do LLM, usa integralmente
+        if self._usando_llm:
+            ref_completa = self.ne.get_reflexao_completa()
+            if ref_completa:
+                return [
+                    "# 9 REFLEXÃO FINAL -- SABERES E COMPETÊNCIAS\n\n",
+                    "*Em conformidade com o art. 15 do Decreto nº 13.048/2026*\n\n",
+                    ref_completa + "\n\n",
+                    f"Viçosa, {self.ano_atual}.\n\n",
+                    f"{self.nome}\n",
+                    f"{self.d['cargo']} -- UFV\n",
+                    f"{self.d['titulacao']}\n",
+                ]
 
         md = [
             "# 9 REFLEXÃO FINAL -- SABERES E COMPETÊNCIAS\n\n",
             "*Em conformidade com o art. 15 do Decreto nº 13.048/2026*\n\n",
-            "## 9.1 Que saberes construí?\n\n",
-            f"Ao longo de {self.anos_carreira} anos de serviço público na UFV, construí "
-            f"saberes e competências que se refletem nos {self.d['total_criterios']} critérios "
-            f"pontuados, totalizando {total} pontos.\n\n",
         ]
 
-        # Saberes construídos dinamicamente
-        saberes = {
-            'normativo': 'interpretação e proposição de normas',
-            'gestao': 'gestão de equipes e processos',
-            'academico': 'produção e difusão de conhecimento',
-            'tecnico': 'atuação técnica especializada',
-        }
+        # 9.1 Saberes
+        md.append("## 9.1 Que saberes construí?\n\n")
+        if self._usando_llm and self.ne.get('reflexao_saberes'):
+            md.append(self.ne.get('reflexao_saberes') + "\n\n")
+        else:
+            md.append(
+                f"Ao longo de {self.anos_carreira} anos de serviço público na UFV, construí "
+                f"saberes e competências que se refletem nos {self.d['total_criterios']} critérios "
+                f"pontuados, totalizando {total} pontos.\n\n"
+            )
+            saberes = {
+                'normativo': 'interpretação e proposição de normas',
+                'gestao': 'gestão de equipes e processos',
+                'academico': 'produção e difusão de conhecimento',
+                'tecnico': 'atuação técnica especializada',
+            }
+            saberes_usados = []
+            for grp in g:
+                if grp['romano'] == 'I' and grp['pontos'] > 0:
+                    saberes_usados.append(('normativo', 'Saber normativo', saberes['normativo']))
+                if grp['romano'] == 'V' and grp['pontos'] > 0:
+                    saberes_usados.append(('gestao', 'Saber de gestão', saberes['gestao']))
+                if grp['romano'] == 'VI' and grp['pontos'] > 0:
+                    saberes_usados.append(('academico', 'Saber acadêmico-científico', saberes['academico']))
+                if grp['romano'] in ('II', 'IV') and grp['pontos'] > 0:
+                    saberes_usados.append(('tecnico', 'Saber técnico-profissional', saberes['tecnico']))
+            if not saberes_usados:
+                saberes_usados = [('gestao', 'Saber profissional', 'atuação no serviço público')]
+            for sid, snome, sdesc in saberes_usados:
+                md.append(f"**{snome}:** {sdesc}, construído ao longo da carreira.\n\n")
 
-        # Seleciona saberes com base nos anexos com pontuação
-        saberes_usados = []
-        for grp in g:
-            if grp['romano'] == 'I' and grp['pontos'] > 0:
-                saberes_usados.append(('normativo', 'Saber normativo', saberes['normativo']))
-            if grp['romano'] == 'V' and grp['pontos'] > 0:
-                saberes_usados.append(('gestao', 'Saber de gestão', saberes['gestao']))
-            if grp['romano'] == 'VI' and grp['pontos'] > 0:
-                saberes_usados.append(('academico', 'Saber acadêmico-científico', saberes['academico']))
-            if grp['romano'] in ('II', 'IV') and grp['pontos'] > 0:
-                saberes_usados.append(('tecnico', 'Saber técnico-profissional', saberes['tecnico']))
+        # 9.2 Contribuição
+        md.append("## 9.2 Qual minha contribuição singular?\n\n")
+        if self._usando_llm and self.ne.get('reflexao_contribuicao'):
+            md.append(self.ne.get('reflexao_contribuicao') + "\n\n")
+        else:
+            anexos_ativos = [grp['nome_curto'] for grp in g if grp['pontos'] > 0]
+            md.append(
+                f"A trajetória aqui documentada demonstra que os saberes construídos "
+                f"na prática profissional, quando refletidos sistematicamente, geram "
+                f"conhecimento relevante para a instituição. Minha contribuição à UFV "
+                f"se expressa nos {len(anexos_ativos)} eixos de atuação "
+                f"({', '.join(anexos_ativos)}) que desenvolvi ao longo da carreira.\n\n"
+            )
 
-        if not saberes_usados:
-            saberes_usados = [('gestao', 'Saber profissional', 'atuação no serviço público')]
+        # 9.3 Pedido
+        md.append("## 9.3 Pedido\n\n")
+        if self._usando_llm and self.ne.get('reflexao_pedido'):
+            md.append(self.ne.get('reflexao_pedido') + "\n\n")
+        else:
+            md.append(
+                "Ante o exposto, com fundamento na Lei nº 11.091/2005 (alterada pela "
+                f"Lei nº 15.367/2026), no Decreto nº 13.048/2026 e na documentação "
+                f"comprobatória anexa, requeiro à CRSC-PCCTAE da Universidade Federal "
+                f"de Viçosa o deferimento da concessão do Reconhecimento de Saberes "
+                f"e Competências no nível RSC-PCCTAE {self.nivel['nome']}.\n\n"
+                "Nestes termos, pede deferimento.\n\n"
+            )
 
-        for sid, snome, sdesc in saberes_usados:
-            md.append(f"**{snome}:** {sdesc}, construído ao longo da carreira.\n\n")
-
-        md.append(
-            "## 9.2 Qual minha contribuição singular?\n\n"
-            f"A trajetória aqui documentada demonstra que os saberes construídos "
-            f"na prática profissional, quando refletidos sistematicamente, geram "
-            f"conhecimento relevante para a instituição. Minha contribuição à UFV "
-            f"se expressa nos {len(anexos_ativos)} eixos de atuação "
-            f"({', '.join(anexos_ativos)}) que desenvolvi ao longo da carreira.\n\n"
-        )
-
-        md.append(
-            "## 9.3 Pedido\n\n"
-            "Ante o exposto, com fundamento na Lei nº 11.091/2005 (alterada pela "
-            f"Lei nº 15.367/2026), no Decreto nº 13.048/2026 e na documentação "
-            f"comprobatória anexa, requeiro à CRSC-PCCTAE da Universidade Federal "
-            f"de Viçosa o deferimento da concessão do Reconhecimento de Saberes "
-            f"e Competências no nível RSC-PCCTAE {self.nivel['nome']}.\n\n"
-            "Nestes termos, pede deferimento.\n\n"
-        )
         md.append(f"Viçosa, {self.ano_atual}.\n\n")
         md.append(f"{self.nome}\n")
         md.append(f"{self.d['cargo']} -- UFV\n")
@@ -845,63 +1084,78 @@ class MemorialGenerator:
 
         md.append("# 1 INTRODUÇÃO -- TRAJETÓRIA E FUNDAMENTOS\n\n")
         md.append("## 1.1 Quem sou e o que apresento\n\n")
-        md.append(
-            f"Meu nome é {self.nome}, matrícula SIAPE {self.d['matricula']}, "
-            f"servidor público federal ocupante do cargo de {self.d['cargo']}"
-            f"{lot_str}, na Universidade Federal de Viçosa. "
-            f"Sou portador do título de {self.d['titulacao']}. "
-            f"Apresento este memorial descritivo para obter o Reconhecimento "
-            f"de Saberes e Competências no Nível {self.nivel['nome']} (RSC-PCCTAE {self.nivel['nome']}), "
-            f"equivalente ao {self.equivalente}, conforme previsto na Lei nº 11.091/2005 "
-            f"(alterada pela Lei nº 15.367/2026) e regulamentado pelo Decreto nº 13.048/2026.\n\n"
-            f"Este memorial descreve uma trajetória profissional de {self.anos_carreira} anos "
-            f"-- de {self.ano_ingresso} a {self.ano_atual} -- "
-            f"construída na interseção entre gestão, planejamento institucional, "
-            f"inovação e produção de conhecimento. Cada atividade representa "
-            f"um saber construído e uma contribuição à UFV.\n\n"
-        )
+        if self._usando_llm and self.ne.get('introducao_quem_sou'):
+            md.append(self.ne.get('introducao_quem_sou') + "\n\n")
+        else:
+            md.append(
+                f"Meu nome é {self.nome}, matrícula SIAPE {self.d['matricula']}, "
+                f"servidor público federal ocupante do cargo de {self.d['cargo']}"
+                f"{lot_str}, na Universidade Federal de Viçosa. "
+                f"Sou portador do título de {self.d['titulacao']}. "
+                f"Apresento este memorial descritivo para obter o Reconhecimento "
+                f"de Saberes e Competências no Nível {self.nivel['nome']} (RSC-PCCTAE {self.nivel['nome']}), "
+                f"equivalente ao {self.equivalente}, conforme previsto na Lei nº 11.091/2005 "
+                f"(alterada pela Lei nº 15.367/2026) e regulamentado pelo Decreto nº 13.048/2026.\n\n"
+                f"Este memorial descreve uma trajetória profissional de {self.anos_carreira} anos "
+                f"-- de {self.ano_ingresso} a {self.ano_atual} -- "
+                f"construída na interseção entre gestão, planejamento institucional, "
+                f"inovação e produção de conhecimento. Cada atividade representa "
+                f"um saber construído e uma contribuição à UFV.\n\n"
+            )
 
         md.append("## 1.2 A essência do meu fazer profissional\n\n")
-        md.append(
-            f"Como {self.d['cargo']}, minha atuação ao longo da carreira desenvolveu "
-            f"competências que se refletem nos {total_crit} critérios pontuados, "
-            f"totalizando {total} pontos.\n\n"
-        )
+        if self._usando_llm and self.ne.get('introducao_essencia'):
+            md.append(self.ne.get('introducao_essencia') + "\n\n")
+        else:
+            md.append(
+                f"Como {self.d['cargo']}, minha atuação ao longo da carreira desenvolveu "
+                f"competências que se refletem nos {total_crit} critérios pontuados, "
+                f"totalizando {total} pontos.\n\n"
+            )
 
-        # Dimensões - geradas dinamicamente
-        tem_comissoes = self.d['grupos'][0]['pontos'] > 0
-        tem_direcao = self.d['grupos'][4]['pontos'] > 0
-        tem_producao = self.d['grupos'][5]['pontos'] > 0
+        # Dimensões - geradas dinamicamente ou via LLM
+        if self._usando_llm:
+            dims_llm = self.ne.get_dimensoes()
+            if dims_llm:
+                for d in dims_llm:
+                    md.append(f"{d}\n\n")
+        else:
+            tem_comissoes = self.d['grupos'][0]['pontos'] > 0
+            tem_direcao = self.d['grupos'][4]['pontos'] > 0
+            tem_producao = self.d['grupos'][5]['pontos'] > 0
 
-        dims = []
-        if tem_comissoes:
-            dims.append(("Dimensão normativo-regulatória", 
-                "atuação em comissões, grupos de trabalho e concursos"))
-        if tem_direcao:
-            dims.append(("Dimensão executivo-estratégica",
-                "exercício de cargos de direção e assessoramento"))
-        if tem_producao:
-            dims.append(("Dimensão acadêmico-científica",
-                "produção e difusão de conhecimento científico"))
+            dims = []
+            if tem_comissoes:
+                dims.append(("Dimensão normativo-regulatória", 
+                    "atuação em comissões, grupos de trabalho e concursos"))
+            if tem_direcao:
+                dims.append(("Dimensão executivo-estratégica",
+                    "exercício de cargos de direção e assessoramento"))
+            if tem_producao:
+                dims.append(("Dimensão acadêmico-científica",
+                    "produção e difusão de conhecimento científico"))
 
-        if not dims:
-            dims.append(("Dimensão profissional", "atuação no serviço público"))
+            if not dims:
+                dims.append(("Dimensão profissional", "atuação no serviço público"))
 
-        for nome, desc in dims:
-            md.append(f"**{nome}:** {desc}.\n\n")
+            for nome, desc in dims:
+                md.append(f"**{nome}:** {desc}.\n\n")
 
         md.append("## 1.3 Fundamentos legais\n\n")
-        md.append(
-            "O presente memorial atende aos requisitos do Art. 3 (eixos de atuação), "
-            "Art. 5 (pontuação) e Art. 15 (saberes e competências diferenciados) "
-            "do Decreto nº 13.048/2026, bem como da Lei nº 11.091/2005 e Lei nº 15.367/2026.\n\n"
-            f"Para o RSC-PCCTAE Nível {self.nivel['nome']}:\n"
-            "- Pontuação mínima: 75 pontos;\n"
-            "- Mínimo de 7 critérios dos Anexos I a VI;\n"
-            "- Pelo menos 1 critério do Anexo VI (produção);\n"
-            f"- Titulação de {self.d['titulacao']} comprovada.\n\n"
-            "Todos os requisitos são atendidos com ampla margem.\n"
-        )
+        if self._usando_llm and self.ne.get('introducao_fundamentos'):
+            md.append(self.ne.get('introducao_fundamentos') + "\n\n")
+        else:
+            md.append(
+                "O presente memorial atende aos requisitos do Art. 3 (eixos de atuação), "
+                "Art. 5 (pontuação) e Art. 15 (saberes e competências diferenciados) "
+                "do Decreto nº 13.048/2026, bem como da Lei nº 11.091/2005 e Lei nº 15.367/2026.\n\n"
+                f"Para o RSC-PCCTAE Nível {self.nivel['nome']}:\n"
+                "- Pontuação mínima: 75 pontos;\n"
+                "- Mínimo de 7 critérios dos Anexos I a VI;\n"
+                "- Pelo menos 1 critério do Anexo VI (produção);\n"
+                f"- Titulação de {self.d['titulacao']} comprovada.\n\n"
+                "Todos os requisitos são atendidos com ampla margem.\n"
+            )
 
         md.append("\n---\n")
 
@@ -1265,6 +1519,10 @@ def main():
     parser.add_argument('--ano-ingresso', '-a', type=int, default=None)
     parser.add_argument('--auto', action='store_true',
                         help='Modo automático: extrai ano da data de admissão')
+    parser.add_argument('--narrativas', '-N', default=None,
+                        help='Caminho para JSON com narrativas geradas pelo LLM')
+    parser.add_argument('--dump-json', '-J', default=None,
+                        help='Exporta dados extraídos do PDF para JSON (sem gerar memorial)')
     args = parser.parse_args()
 
     if not args.pdf:
@@ -1279,9 +1537,13 @@ def main():
     stem = pdf_path.stem.replace(' ', '_')
 
     print("=" * 60)
-    print("PDF -> Memorial RSC-PCCTAE v4.0 (GENÉRICO)")
+    print("PDF -> Memorial RSC-PCCTAE v5.0 (NARRATIVAS LLM)")
     print("=" * 60)
     print(f"   Decreto nº 13.048/2026: {DECRETO_URL}")
+    if args.narrativas:
+        print(f"   Modo: NARRATIVAS LLM")
+    else:
+        print(f"   Modo: FALLBACK GENÉRICO (sem --narrativas)")
     print("=" * 60)
 
     print(f"\nLendo PDF: {pdf_path}")
@@ -1315,8 +1577,52 @@ def main():
     anos_carreira = datetime.now().year - ano_ingresso
     print(f"\n   Ano de ingresso: {ano_ingresso} ({anos_carreira} anos de carreira)")
 
+    # --dump-json: exporta dados extraídos sem gerar memorial
+    if args.dump_json:
+        dump_path = Path(args.dump_json)
+        dados_exportar = {
+            'nome': data['nome'],
+            'matricula': data['matricula'],
+            'cargo': data['cargo'],
+            'titulacao': data['titulacao'],
+            'lotacao': data.get('lotacao', ''),
+            'data_admissao': data.get('data_admissao', ''),
+            'ano_ingresso': ano_ingresso,
+            'anos_carreira': anos_carreira,
+            'rsc_requerido': data['rsc_requerido'],
+            'rsc_nivel': data.get('rsc_nivel', 'VI'),
+            'equivalente': data.get('equivalente', 'Doutorado'),
+            'total_geral': data['total_geral'],
+            'total_criterios': data['total_criterios'],
+            'grupos': [{
+                'romano': g['romano'], 'nome_curto': g['nome_curto'],
+                'criterios': g['criterios'], 'pontos': g['pontos']
+            } for g in data['grupos']],
+            'criterios': {k: {
+                'key': v['key'], 'romano': v['romano'], 'numero': v['numero'],
+                'descricao': v['descricao'], 'pontos': v['pontos'],
+                'itens': v['itens']
+            } for k, v in data['criterios'].items()},
+            'ordem_criterios': data.get('ordem_criterios', []),
+        }
+        with open(dump_path, 'w', encoding='utf-8') as f:
+            json.dump(dados_exportar, f, ensure_ascii=False, indent=2)
+        print(f"\n   Dados exportados: {dump_path}")
+        print(f"   Use este JSON como base para gerar as narrativas com o LLM.")
+        print(f"   Depois execute: python3 run.py <pdf> --narrativas narrativas.json")
+        return
+
+    # Carrega narrativas do LLM se fornecidas
+    narrative_engine = None
+    if args.narrativas:
+        try:
+            narrative_engine = NarrativeEngine(args.narrativas)
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            print(f"   Aviso: não foi possível carregar narrativas: {e}")
+            print(f"   Usando fallback genérico.")
+
     print(f"\nGerando memorial em Markdown...")
-    gen = MemorialGenerator(data, ano_ingresso)
+    gen = MemorialGenerator(data, ano_ingresso, narrative_engine=narrative_engine)
     md_content = gen.generate()
     md_path = output_dir / f"{stem}_MEMORIAL.md"
     with open(md_path, 'w', encoding='utf-8') as f:
