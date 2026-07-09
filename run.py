@@ -783,21 +783,6 @@ class MemorialGenerator:
                 "\n",
                 "Publiquei os seguintes trabalhos acadêmicos:\n",
                 "\n",
-                "LUGÃO, R. G.; ABRANTES, L. A.; BRUNOZI JR., A. C.; SILVA, F. C.; SOUZA, A. P. "
-                "Reforma Universitária no Brasil: uma análise dos documentos oficiais e da "
-                "produção científica sobre o Reuni. **X Colóquio Sobre Gestión Universitaria "
-                "en América del Sur**, Mar del Plata, 2010. -- Anais de evento internacional.\n",
-                "\n",
-                "LUGÃO, R. G.; ABRANTES, L. A.; BRUNOZI JUNIOR, A. C.; BRUNOZI, M. A. V. "
-                "Caracterização, limites e potencialidades do programa REUNI em IFES mineiras: "
-                "um estudo multicaso. **XIII Colóquio Internacional sobre Gestão Universitária "
-                "nas Américas**, Buenos Aires, 2013. -- Anais de evento internacional.\n",
-                "\n",
-                "LUGÃO, R. G.; ABRANTES, L. A.; BRUNOZI JUNIOR, A. C. Planejamento, "
-                "implementação e avaliação do REUNI: Um Estudo em Universidades Mineiras. "
-                "**Estudo & Debate (Online)**, v. 22, p. 78-96, 2015. -- Artigo em periódico "
-                "científico.\n",
-                "\n",
             ]
         if 'VI-15' in c:
             md += [
@@ -956,24 +941,6 @@ class MemorialGenerator:
             "e procedimentos para o Reconhecimento de Saberes e Competências (RSC) no "
             "âmbito do PCCTAE. Disponível em: " + DECRETO_URL + ". Acesso em: "
             + datetime.now().strftime('%d %b. %Y') + ".\n",
-            "\n",
-            "LUGÃO, R. G.; ABRANTES, L. A.; BRUNOZI JUNIOR, A. C. **Consequências, "
-            "limites e potencialidades na implementação do REUNI**. São Paulo: Novas "
-            "Edições Acadêmicas, 2015. ISBN 9783639744248.\n",
-            "\n",
-            "LUGÃO, R. G.; ABRANTES, L. A.; BRUNOZI JR., A. C.; SILVA, F. C.; SOUZA, A. P. "
-            "Reforma Universitária no Brasil: uma análise dos documentos oficiais e da "
-            "produção científica sobre o Reuni. In: **X Colóquio Sobre Gestión "
-            "Universitaria en América del Sur**, Mar del Plata, 2010.\n",
-            "\n",
-            "LUGÃO, R. G.; ABRANTES, L. A.; BRUNOZI JUNIOR, A. C.; BRUNOZI, M. A. V. "
-            "Caracterização, limites e potencialidades do programa REUNI em IFES "
-            "mineiras: um estudo multicaso. In: **XIII Colóquio Internacional sobre "
-            "Gestão Universitária nas Américas**, Buenos Aires, 2013.\n",
-            "\n",
-            "LUGÃO, R. G.; ABRANTES, L. A.; BRUNOZI JUNIOR, A. C. Planejamento, "
-            "implementação e avaliação do REUNI: Um Estudo em Universidades Mineiras. "
-            "**Estudo & Debate (Online)**, v. 22, p. 78-96, 2015.\n",
             "\n",
             "PIRES, Alice Regina Pinto; SILVA, Bruna (org.). **Normalização de "
             "trabalhos acadêmicos**: atualizada conforme ABNTs NBR 14724/2024, NBR "
