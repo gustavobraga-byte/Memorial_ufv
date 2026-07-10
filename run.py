@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 =============================================================================
-PDF -> Memorial RSC-PCCTAE — Gerador Autônomo v5.0 (NARRATIVAS LLM)
+PDF -> Memorial RSC-PCCTAE — Gerador Autônomo v5.3 (NARRATIVAS LLM)
 =============================================================================
 Gera o memorial completo de Reconhecimento de Saberes e Competências (RSC-PCCTAE)
 autonomamente a partir do PDF oficial do Relatório Detalhado RSC emitido pelo
@@ -102,6 +102,8 @@ nenhumas outro outros outra outras muito muitos muita muitas pouco poucos
 pouca poucas tal tais qual quais quer queres eu tu ele nos vos eles voce
 voces nos tao pouco demais acerca afinal entao ainda aqui ali la ali
 ai ja nao sim ora pois ah oh ih olha olhe veja
+polo logo cedo seco fato fala fica saca saco bato bate pato
+mate meto mito moto pito peta taxi onibus onibus
 """.split())
 
 def _match_case(template, target):
@@ -115,6 +117,7 @@ def restaurar_acentos(texto):
     if not _REV_INDEX:
         return texto
     proibidas = _STOPWORDS
+    freqs = _SP.word_frequency.dictionary if _SP else {}
 
     def _sub(match):
         word = match.group(0)
@@ -128,10 +131,18 @@ def restaurar_acentos(texto):
         candidates = _REV_INDEX.get(sw)
         if not candidates:
             return word
-        if len(candidates) == 1:
-            return _match_case(word, candidates[0][0])
         top, top_f = candidates[0]
         second_f = candidates[1][1] if len(candidates) > 1 else 0
+        # Só acentua se a variante ACENTUADA for MAIS frequente que a
+        # própria forma SEM acento no corpus. Isso evita colocar acento
+        # em palavras corretas sem acento (ex.: pesquisa, apresenta,
+        # atua), que antes eram wrongly transformadas em pesquisá,
+        # apresentá, atuá.
+        f_sem = freqs.get(sw, 0)
+        if top_f <= f_sem:
+            return word
+        if len(candidates) == 1:
+            return _match_case(word, top)
         if top_f >= 10 * second_f:
             return _match_case(word, top)
         return word
@@ -987,25 +998,36 @@ class MemorialGenerator:
     def generate(self):
         """Gera o memorial completo."""
         titulo = (f"MEMORIAL DESCRITIVO PARA RECONHECIMENTO DE SABERES E "
-                  f"COMPETÊNCIAS -- RSC-PCCTAE NÍVEL {self.nivel['nome']}")
+                  f"COMPETÊNCIAS – RSC-PCCTAE NÍVEL {self.nivel['nome']}")
         md = []
 
         # ===== CAPA =====
-        md.append('<br><br><br><br><br>\n')
+        # ABNT NBR 14724: elementos da capa distribuídos verticalmente
+        # na página A4 (29,7 cm). Cada <br> vira um parágrafo vazio
+        # de 12pt (0,42 cm). A página tem 841,9pt, com margens de
+        # 85pt (3 cm) e 56,7pt (2 cm) → área útil = 700,2pt.
+        # Alvo: instituição a ~96pt da margem (3,4 cm), autor ~234pt
+        # (8,3 cm), título ~432pt (15,3 cm), local/ano ~650pt (23 cm).
+        md.append('<br><br><br><br><br><br><br><br>\n')       # 8  =  96pt
         md.append('<p align="center"><strong>UNIVERSIDADE FEDERAL DE VIÇOSA</strong></p>\n')
-        md.append('<br><br>\n')
+        md.append('<br><br><br><br><br><br><br><br><br><br>\n')  # 10 = 120pt
         md.append(f'<p align="center"><strong>{self.nome}</strong></p>\n')
-        md.append('<br><br><br>\n')
+        md.append('<br><br><br><br><br><br><br><br><br><br><br><br>\n')  # 12 = 144pt
         md.append(f'<p align="center"><strong>{titulo}</strong></p>\n')
-        md.append('<br><br><br><br><br>\n')
-        md.append('<p align="center"><strong>VIÇOSA -- MINAS GERAIS</strong></p>\n')
+        md.append('<br><br><br><br><br><br><br><br><br><br><br><br><br>\n')  # 13 = 156pt
+        md.append('<p align="center"><strong>VIÇOSA – MINAS GERAIS</strong></p>\n')
         md.append(f'<p align="center"><strong>{self.ano_atual}</strong></p>\n')
-        md.append('<br><br><br>\n')
+        md.append('<br><br><br>\n')                              # 3  =  36pt
         md.append("\n---\n")
 
-        # ===== FOLHA DE ROSTO =====
+        # ===== FOLHA DE ROSTO (verso da capa) =====
+        # ABNT NBR 14724: elementos distribuídos com espaçamento generoso
+        # para preencher a página verticalmente.
+        md.append('<br><br><br><br><br><br><br><br>\n')
         md.append(f'<p align="center"><strong>{self.nome}</strong></p>\n')
+        md.append('<br><br><br><br><br><br><br><br>\n')
         md.append(f'<p align="center"><strong>{titulo}</strong></p>\n')
+        md.append('<br><br><br><br><br><br>\n')
         md.append('<div style="text-align:justify; margin-left:4cm; margin-right:0cm; line-height:1.0;">\n')
         md.append(
             f'Memorial descritivo apresentado à Comissão para Reconhecimento de Saberes '
@@ -1015,9 +1037,10 @@ class MemorialGenerator:
             f'nº 11.091/2005 (alterada pela Lei nº 15.367/2026), do Decreto nº 13.048/2026 '
             f'e da legislação correlata.\n'
         )
-        md.append('</div>\n<br>\n')
-        md.append('<p align="center">VIÇOSA -- MINAS GERAIS</p>\n')
+        md.append('</div>\n<br><br><br><br><br><br><br><br>\n')
+        md.append('<p align="center">VIÇOSA – MINAS GERAIS</p>\n')
         md.append(f'<p align="center">{self.ano_atual}</p>\n')
+        md.append('<br><br><br><br>\n')
         md.append("\n---\n")
 
         # ==== DEDICATÓRIA =====
@@ -1044,7 +1067,7 @@ class MemorialGenerator:
         ep_q, ep_a = self._selecionar_epigrafe()
         md.append(f'<p align="right" style="font-size:12pt; font-style:italic;">\n')
         md.append(f'  {ep_q}<br>\n')
-        md.append(f'  <span style="font-size:11pt;">-- {ep_a}</span>\n')
+        md.append(f'  <span style="font-size:11pt;">— {ep_a}</span>\n')
         md.append('</p>\n\n---\n')
 
         # ===== LISTA DE SIGLAS =====
@@ -1252,6 +1275,9 @@ class MemorialGenerator:
         )
 
         texto = ''.join(md)
+        # Travessão curto (–) conforme ABNT nas separações de títulos,
+        # subtítulos e notas (uniformiza o antigo hífen duplo "--").
+        texto = texto.replace(' -- ', ' – ')
         texto = normalizar_texto(texto)
         texto = restaurar_acentos(texto)
         return texto
@@ -1281,32 +1307,50 @@ def _html_to_docx(doc, lines):
     is_cover = br_count > 3 or 'UNIVERSIDADE FEDERAL' in clean.upper()
 
     if is_folha:
-        if len(lines_text) >= 4:
-            for ct in [lines_text[0], lines_text[1]]:
-                p = doc.add_paragraph()
-                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                p.paragraph_format.line_spacing = 1.5
-                r = p.add_run(ct)
-                r.bold = True
-                r.font.size = Pt(12)
-            doc.add_paragraph()
-            # Nature indentada
-            for part in lines_text[2:-2]:
-                if 'Memorial' in part or 'requisito' in part or 'apresentado' in part or 'nos termos' in part:
+        # Renderização orientada a elementos: preserva <br> como parágrafos
+        # vazios (distribuição vertical ABNT) e <p>/<div> como texto.
+        in_div = False
+        indent_cm = None
+        for l in lines:
+            clean = re.sub(r'<[^>]+>', '', l).strip()
+            if '<div' in l:
+                in_div = True
+                m = re.search(r'margin-left:\s*([\d.]+)cm', l)
+                if m:
+                    indent_cm = float(m.group(1))
+                continue
+            if '</div>' in l:
+                in_div = False
+                indent_cm = None
+                continue
+            if '<br' in l:
+                count = l.count('<br>')
+                for _ in range(count):
+                    p = doc.add_paragraph()
+                    p.paragraph_format.line_spacing = 1.0
+                    p.paragraph_format.space_after = Pt(0)
+                    p.paragraph_format.space_before = Pt(0)
+                continue
+            if clean and not clean.startswith('&'):
+                if in_div and indent_cm:
+                    # Nature do trabalho (recuada, justificada, espaço simples)
                     p = doc.add_paragraph()
                     p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-                    p.paragraph_format.line_spacing = 1.5
-                    p.paragraph_format.left_indent = Cm(4)
-                    r = p.add_run(part)
+                    p.paragraph_format.line_spacing = 1.0
+                    p.paragraph_format.space_after = Pt(6)
+                    p.paragraph_format.left_indent = Cm(indent_cm)
+                    r = p.add_run(clean)
                     r.font.size = Pt(12)
-                    break
-            doc.add_paragraph()
-            for ct in lines_text[-2:]:
-                p = doc.add_paragraph()
-                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                p.paragraph_format.line_spacing = 1.5
-                r = p.add_run(ct)
-                r.font.size = Pt(12)
+                else:
+                    p = doc.add_paragraph()
+                    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    p.paragraph_format.line_spacing = 1.5
+                    p.paragraph_format.space_after = Pt(6)
+                    r = p.add_run(clean)
+                    # Aplica negrito se a linha original continha <strong>
+                    if '<strong>' in l:
+                        r.bold = True
+                    r.font.size = Pt(12)
         return
 
     if is_right:
@@ -1320,19 +1364,35 @@ def _html_to_docx(doc, lines):
         return
 
     if is_cover:
-        text_lines = [re.sub(r'<[^>]+>', '', l).strip() for l in lines 
-                      if re.sub(r'<[^>]+>', '', l).strip() and not re.sub(r'<[^>]+>', '', l).strip().startswith('&')]
-        for _ in range(6):
-            doc.add_paragraph()
-        for ct in text_lines:
-            p = doc.add_paragraph()
-            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            p.paragraph_format.line_spacing = 1.5
-            r = p.add_run(ct)
-            r.bold = True
-            r.font.size = Pt(12)
-        for _ in range(4):
-            doc.add_paragraph()
+        # Preserva a estrutura completa da capa: tags <br> geram
+        # parágrafos vazios (espaçamento), tags <p> geram o texto.
+        # ABNT: elementos da capa devem ser generosamente espaçados
+        # para distribuir o conteúdo verticalmente na página.
+        elements = []
+        for l in lines:
+            clean = re.sub(r'<[^>]+>', '', l).strip()
+            if clean and not clean.startswith('&'):
+                elements.append(('text', clean))
+            elif '<br' in l:
+                n = l.count('<br>')
+                if n > 0:
+                    elements.append(('br', n))
+        for elem_type, content in elements:
+            if elem_type == 'br':
+                for _ in range(content):
+                    p = doc.add_paragraph()
+                    p.paragraph_format.line_spacing = 1.0
+                    p.paragraph_format.space_after = Pt(0)
+                    p.paragraph_format.space_before = Pt(0)
+            elif elem_type == 'text':
+                p = doc.add_paragraph()
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                p.paragraph_format.line_spacing = 1.5
+                p.paragraph_format.space_before = Pt(0)
+                p.paragraph_format.space_after = Pt(6)
+                r = p.add_run(content)
+                r.bold = True
+                r.font.size = Pt(12)
         return
 
     # Generic
@@ -1343,6 +1403,40 @@ def _html_to_docx(doc, lines):
             p.paragraph_format.line_spacing = 1.5
             r = p.add_run(ct)
             r.font.size = Pt(12)
+
+
+def _add_toc_field(doc):
+    """Insere um campo Sumário (TOC) no documento.
+
+    O Word/LibreOffice preenche automaticamente os títulos e os
+    números de página quando o usuário atualiza o campo
+    (botão direito > Atualizar campo). É a forma ABNT de gerar
+    o sumário com numeração de páginas e pontilhado de ligação.
+    """
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    run = p.add_run()
+    fld_begin = OxmlElement('w:fldChar')
+    fld_begin.set(qn('w:fldCharType'), 'begin')
+    instr = OxmlElement('w:instrText')
+    instr.set(qn('xml:space'), 'preserve')
+    # Níveis 1 e 2 (seções primárias e subseções), com hyperlink e pontilhado.
+    instr.text = 'TOC \\o "1-2" \\h \\u'
+    fld_sep = OxmlElement('w:fldChar')
+    fld_sep.set(qn('w:fldCharType'), 'separate')
+    t = OxmlElement('w:t')
+    t.text = ('Sumário — atualize o campo (botão direito > "Atualizar campo") '
+              'para exibir os títulos e os números de página.')
+    fld_end = OxmlElement('w:fldChar')
+    fld_end.set(qn('w:fldCharType'), 'end')
+    run._r.append(fld_begin)
+    run._r.append(instr)
+    run._r.append(fld_sep)
+    run._r.append(t)
+    run._r.append(fld_end)
+    return p
 
 
 def md_to_docx_ufv(md_path, docx_path):
@@ -1360,6 +1454,17 @@ def md_to_docx_ufv(md_path, docx_path):
     font.size = Pt(12)
     style.paragraph_format.line_spacing = 1.5
 
+    # Estilos de cabeçalho (Heading) — necessários para que o campo
+    # Sumário (TOC) do Word/LibreOffice liste as seções e numere páginas.
+    for _h, _sz in (('Heading 1', 14), ('Heading 2', 12)):
+        try:
+            _st = doc.styles[_h]
+            _st.font.name = 'Arial'
+            _st.font.size = Pt(_sz)
+            _st.font.bold = True
+        except KeyError:
+            pass
+
     with open(md_path, 'r', encoding='utf-8') as f:
         content = f.read()
 
@@ -1367,6 +1472,8 @@ def md_to_docx_ufv(md_path, docx_path):
     i = 0
     html_block = []
     in_html = False
+    in_sumario = False
+    toc_done = False
 
     while i < len(lines):
         stripped = lines[i].strip()
@@ -1392,6 +1499,7 @@ def md_to_docx_ufv(md_path, docx_path):
 
         if stripped.startswith('## '):
             p = doc.add_paragraph()
+            p.style = doc.styles['Heading 2']
             p.alignment = WD_ALIGN_PARAGRAPH.LEFT
             p.paragraph_format.space_before = Pt(12)
             r = p.add_run(stripped.replace('## ', ''))
@@ -1400,6 +1508,7 @@ def md_to_docx_ufv(md_path, docx_path):
 
         elif stripped.startswith('# ') and not stripped.startswith(('# LISTA', '# SUMÁRIO', '# AGRADECIMENTOS')):
             p = doc.add_paragraph()
+            p.style = doc.styles['Heading 1']
             p.alignment = WD_ALIGN_PARAGRAPH.LEFT
             p.paragraph_format.space_before = Pt(18)
             r = p.add_run(stripped.replace('# ', ''))
@@ -1413,8 +1522,15 @@ def md_to_docx_ufv(md_path, docx_path):
             r = p.add_run(stripped.replace('# ', ''))
             r.bold = True
             r.font.size = Pt(14)
+            if 'SUMÁRIO' in stripped:
+                in_sumario = True
+                toc_done = False
 
         elif stripped.startswith('---'):
+            if in_sumario and not toc_done:
+                _add_toc_field(doc)
+                toc_done = True
+                in_sumario = False
             doc.add_page_break()
 
         elif stripped.startswith('| '):
@@ -1443,6 +1559,9 @@ def md_to_docx_ufv(md_path, docx_path):
             continue
 
         elif stripped.startswith('- '):
+            if in_sumario:
+                i += 1
+                continue
             p = doc.add_paragraph()
             p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
             p.paragraph_format.line_spacing = 1.5
@@ -1503,6 +1622,18 @@ def md_to_docx_ufv(md_path, docx_path):
         for r in p.runs:
             r.font.size = Pt(10)
 
+    # Auto-update fields (inclui sumário TOC) ao abrir no Word/LibreOffice
+    try:
+        from docx.oxml import parse_xml as _parse_xml
+        _settings = doc.settings.element
+        _uf = _parse_xml(
+            '<w:updateFields w:val="true" '
+            'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>'
+        )
+        _settings.append(_uf)
+    except Exception:
+        pass  # não crítico; fallback: usuário atualiza manualmente
+
     doc.save(docx_path)
 
 
@@ -1514,7 +1645,8 @@ def main():
         description='Gera memorial RSC-PCCTAE completo a partir do PDF de relatório detalhado.')
     parser.add_argument('pdf', nargs='?', default=None,
                         help='Caminho para o PDF do Relatório Detalhado RSC')
-    parser.add_argument('--output-dir', '-o', default=None)
+    parser.add_argument('--output-dir', '-o', default=None,
+                        help='Diretório de saída (padrão: pasta PesquisAI no Drive)')
     parser.add_argument('--nome', '-n', default=None)
     parser.add_argument('--ano-ingresso', '-a', type=int, default=None)
     parser.add_argument('--auto', action='store_true',
@@ -1532,12 +1664,17 @@ def main():
     if not pdf_path.exists():
         sys.exit(f"Arquivo não encontrado: {pdf_path}")
 
-    output_dir = Path(args.output_dir) if args.output_dir else pdf_path.parent
+    if args.output_dir:
+        output_dir = Path(args.output_dir)
+    else:
+        # Default: pasta PesquisAI (Google Drive no Colab, ou variável de ambiente)
+        _pesquisai = os.environ.get('PESQUISAI_DIR', '/content/drive/My Drive/PesquisAI')
+        output_dir = Path(_pesquisai)
     output_dir.mkdir(parents=True, exist_ok=True)
     stem = pdf_path.stem.replace(' ', '_')
 
     print("=" * 60)
-    print("PDF -> Memorial RSC-PCCTAE v5.0 (NARRATIVAS LLM)")
+    print("PDF -> Memorial RSC-PCCTAE v5.3 (NARRATIVAS LLM)")
     print("=" * 60)
     print(f"   Decreto nº 13.048/2026: {DECRETO_URL}")
     if args.narrativas:

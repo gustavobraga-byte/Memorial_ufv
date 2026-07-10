@@ -13,7 +13,7 @@ description: >
   "relatório RSC", ou ao mencionar o arquivo "RSC Detalhado_*.pdf".
 ---
 
-# PDF → Memorial RSC-PCCTAE — Gerador Autônomo v5.0 (NARRATIVAS LLM)
+# PDF → Memorial RSC-PCCTAE — Gerador Autônomo v5.3 (NARRATIVAS LLM)
 
 > **Gere textos LONGOS, em LINGUAGEM CIENTÍFICA, como o memorial de um professor titular.**
 > O `run.py` depois formata e coloca nos tópicos pré-estabelecidos.
