@@ -1265,7 +1265,7 @@ class MemorialGenerator:
         )
         md.append(
             "UNIVERSIDADE FEDERAL DE VIÇOSA. Pró-Reitoria de Gestão de Pessoas. "
-            f"**Relatório Detalhado RSC**: {self.nome}. Viçosa, MG, {self.ano_atual}.\n\n"
+            f"**Relatório Detalhado RSC**. Viçosa, MG, {self.ano_atual}.\n\n"
         )
         md.append("PIRES, A. R. P.; SILVA, B. (org.). **Normalização de trabalhos acadêmicos**: conforme ABNTs NBR 14724/2024, NBR 6023/2018 e NBR 10520/2023. Viçosa, MG: UFV, 2025.\n\n---\n")
         md.append(
