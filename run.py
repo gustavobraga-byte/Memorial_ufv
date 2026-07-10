@@ -1008,7 +1008,6 @@ class MemorialGenerator:
         # 85pt (3 cm) e 56,7pt (2 cm) → área útil = 700,2pt.
         # Alvo: instituição a ~96pt da margem (3,4 cm), autor ~234pt
         # (8,3 cm), título ~432pt (15,3 cm), local/ano ~650pt (23 cm).
-        md.append('<br><br><br><br><br><br><br><br>\n')       # 8  =  96pt
         md.append('<p align="center"><strong>UNIVERSIDADE FEDERAL DE VIÇOSA</strong></p>\n')
         md.append('<br><br><br><br><br><br><br><br><br><br>\n')  # 10 = 120pt
         md.append(f'<p align="center"><strong>{self.nome}</strong></p>\n')
